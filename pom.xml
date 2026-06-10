@@ -74,11 +74,11 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Kite Connect Java SDK -->
+        <!-- Kite Connect Java SDK (JitPack: github.com/zerodhatech/javakiteconnect) -->
         <dependency>
-            <groupId>com.github.zerodhatech.javakiteconnect</groupId>
+            <groupId>com.github.zerodhatech</groupId>
             <artifactId>javakiteconnect</artifactId>
-            <version>3.3.0</version>
+            <version>v3.5.1</version>
         </dependency>
 
         <!-- Anthropic / HTTP client for LLM advisory -->
