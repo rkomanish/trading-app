@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Trade History')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('trades')}"></nav>
+<div class="container">
+    <div class="card">
+        <div class="card-title">Trade History (last 50)</div>
+        <table>
+            <thead><tr>
+                <th>Symbol</th><th>Type</th><th>Entry</th><th>Exit</th>
+                <th>P&amp;L</th><th>Costs</th><th>Strategy</th><th>Entry Time</th><th>Exit Time</th><th>Exit Reason</th>
+            </tr></thead>
+            <tbody>
+            <tr th:each="t : ${trades}">
+                <td th:text="${t.symbol}"></td>
+                <td th:text="${t.optionType}"></td>
+                <td th:text="'₹' + ${#numbers.formatDecimal(t.entryPrice, 1, 2)}"></td>
+                <td th:text="${t.exitPrice != null ? '₹' + #numbers.formatDecimal(t.exitPrice, 1, 2) : 'OPEN'}"></td>
+                <td th:class="${t.realizedPnl != null and t.realizedPnl >= 0} ? 'green' : 'red'"
+                    th:text="${t.realizedPnl != null ? '₹' + #numbers.formatDecimal(t.realizedPnl, 1, 2) : '-'}"></td>
+                <td th:text="${t.totalCosts != null ? '₹' + #numbers.formatDecimal(t.totalCosts, 1, 2) : '-'}" style="color:#666"></td>
+                <td th:text="${t.strategyName}" style="color:#888;font-size:12px"></td>
+                <td th:text="${#temporals.format(t.entryTime, 'MM-dd HH:mm')}" style="color:#666"></td>
+                <td th:text="${t.exitTime != null ? #temporals.format(t.exitTime, 'MM-dd HH:mm') : '-'}" style="color:#666"></td>
+                <td th:text="${t.exitReason}" style="color:#555;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Recent Signals</div>
+        <table>
+            <thead><tr>
+                <th>Time</th><th>Strategy</th><th>Direction</th><th>Risk</th><th>Vetoed</th><th>Reasoning</th>
+            </tr></thead>
+            <tbody>
+            <tr th:each="s : ${signals}">
+                <td th:text="${#temporals.format(s.generatedAt, 'MM-dd HH:mm')}" style="color:#666"></td>
+                <td th:text="${s.strategyName}" style="font-size:12px"></td>
+                <td th:class="${s.direction.name().startsWith('LONG_CE')} ? 'green' : 'red'"
+                    th:text="${s.direction}"></td>
+                <td th:class="${s.riskApproved} ? 'green' : 'red'"
+                    th:text="${s.riskApproved} ? 'APPROVED' : (s.riskRejectionReason ?: 'REJECTED')"></td>
+                <td th:class="${s.vetoedBySentiment} ? 'yellow' : ''"
+                    th:text="${s.vetoedBySentiment} ? 'YES' : 'NO'"></td>
+                <td th:text="${s.reasoning}" style="color:#666;font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

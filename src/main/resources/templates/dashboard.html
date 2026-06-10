@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Dashboard')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('dashboard')}"></nav>
+
+<div class="container">
+
+    <!-- Flash messages -->
+    <div th:if="${killSwitchMessage}" class="alert alert-danger" th:text="${killSwitchMessage}"></div>
+    <div th:if="${message}" class="alert alert-success" th:text="${message}"></div>
+
+    <!-- Kill switch + mode banner -->
+    <div class="grid-2" style="margin-bottom:16px">
+        <div>
+            <form method="post" th:action="@{/kill-switch}"
+                  onsubmit="return confirm('ACTIVATE KILL SWITCH? This will flatten ALL positions immediately.')">
+                <button type="submit" class="kill-switch-btn"
+                        th:disabled="${killSwitchActive}">
+                    &#9888; KILL SWITCH — FLATTEN ALL
+                </button>
+                <div th:if="${killSwitchActive}" class="alert alert-danger" style="margin-top:8px">
+                    KILL SWITCH ACTIVE — trading halted
+                    <form method="post" th:action="@{/kill-switch/reset}" style="display:inline; margin-left:10px">
+                        <button type="submit" class="btn btn-sm" style="background:#333">Reset</button>
+                    </form>
+                </div>
+            </form>
+        </div>
+        <div class="card" style="display:flex;align-items:center;justify-content:center">
+            <div style="text-align:center">
+                <div style="font-size:11px;color:#666;text-transform:uppercase;margin-bottom:4px">Trading Mode</div>
+                <div th:class="${liveMode} ? 'red' : 'green'"
+                     style="font-size:22px;font-weight:bold"
+                     th:text="${liveMode} ? '⚠ LIVE — REAL MONEY' : '✓ PAPER TRADING'">PAPER</div>
+                <div style="font-size:11px;color:#555;margin-top:4px" th:text="${brokerName}">PaperBroker</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status grid -->
+    <div class="grid-4" style="margin-bottom:16px">
+        <div class="card">
+            <div class="card-title">Trades Today</div>
+            <div class="stat-value"
+                 th:class="${tradesUsedToday >= maxTradesPerDay} ? 'stat-value red' : 'stat-value green'"
+                 th:text="${tradesUsedToday} + ' / ' + ${maxTradesPerDay}">0/3</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Daily P&amp;L</div>
+            <div class="stat-value"
+                 th:class="${dailyPnl < 0} ? 'stat-value red' : 'stat-value green'"
+                 th:text="'₹' + ${#numbers.formatDecimal(dailyPnl, 1, 2)}">₹0.00</div>
+            <div class="stat-label" th:text="'Limit: -₹' + ${#numbers.formatDecimal(maxDailyLoss, 1, 2)}">Limit: -₹2000</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Auto Trading</div>
+            <div class="stat-value"
+                 th:class="${autoTradingEnabled} ? 'stat-value green' : 'stat-value red'"
+                 th:text="${autoTradingEnabled} ? 'ENABLED' : 'DISABLED'">ENABLED</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Weekly Breaker</div>
+            <div class="stat-value"
+                 th:class="${weeklyBreakerActive} ? 'stat-value red' : 'stat-value green'"
+                 th:text="${weeklyBreakerActive} ? 'TRIPPED' : 'OK'">OK</div>
+        </div>
+    </div>
+
+    <!-- Kite connection + sentiment -->
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-title">Kite Connection</div>
+            <div th:class="${kiteConnected} ? 'green' : 'red'"
+                 style="font-size:16px;font-weight:bold;margin-bottom:8px"
+                 th:text="${kiteStatus}">DISCONNECTED</div>
+            <a th:href="@{/auth/kite}" class="btn btn-primary btn-sm"
+               th:if="${!kiteConnected}">Connect Kite</a>
+        </div>
+        <div class="card" th:if="${latestSentiment != null}">
+            <div class="card-title">Latest Sentiment</div>
+            <span th:class="'badge badge-' + ${#strings.toLowerCase(latestSentiment.sentiment)}"
+                  th:text="${latestSentiment.sentiment}">NEUTRAL</span>
+            <span style="color:#666;margin-left:8px;font-size:12px"
+                  th:text="'conf=' + ${#numbers.formatDecimal(latestSentiment.confidence, 1, 2)}">conf=0.50</span>
+            <div style="font-size:12px;color:#888;margin-top:6px"
+                 th:text="${latestSentiment.reasoning}"></div>
+        </div>
+    </div>
+
+    <!-- Open positions -->
+    <div class="card" th:if="${!openTrades.isEmpty()}">
+        <div class="card-title">Open Positions</div>
+        <table>
+            <thead><tr>
+                <th>Symbol</th><th>Type</th><th>Entry</th><th>Lots</th>
+                <th>Stop Loss</th><th>Target</th><th>Strategy</th><th>Entered</th>
+            </tr></thead>
+            <tbody>
+            <tr th:each="trade : ${openTrades}">
+                <td th:text="${trade.symbol}"></td>
+                <td th:text="${trade.optionType}" class="green"></td>
+                <td th:text="'₹' + ${#numbers.formatDecimal(trade.entryPrice, 1, 2)}"></td>
+                <td th:text="${trade.lots}"></td>
+                <td th:text="'₹' + ${#numbers.formatDecimal(trade.stopLossPrice, 1, 2)}" class="red"></td>
+                <td th:text="${trade.targetPrice != null ? '₹' + #numbers.formatDecimal(trade.targetPrice, 1, 2) : '-'}" class="green"></td>
+                <td th:text="${trade.strategyName}" style="color:#888;font-size:12px"></td>
+                <td th:text="${#temporals.format(trade.entryTime, 'HH:mm:ss')}" style="color:#666"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="card" th:if="${openTrades.isEmpty()}">
+        <div style="color:#555;text-align:center;padding:20px">No open positions</div>
+    </div>
+
+    <!-- Recent risk events -->
+    <div class="card" th:if="${!recentRiskEvents.isEmpty()}">
+        <div class="card-title">Recent Risk Events</div>
+        <table>
+            <thead><tr><th>Time</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+            <tr th:each="e : ${recentRiskEvents}">
+                <td th:text="${#temporals.format(e.occurredAt, 'HH:mm:ss')}" style="color:#666;white-space:nowrap"></td>
+                <td th:text="${e.eventType}" style="color:#ffcc00;font-size:11px"></td>
+                <td th:text="${e.description}" style="color:#aaa;font-size:12px"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div style="color:#444;font-size:11px;text-align:right;margin-top:8px"
+         th:text="'Last updated: ' + ${#temporals.format(now, 'yyyy-MM-dd HH:mm:ss z')}"></div>
+
+</div>
+</body>
+</html>

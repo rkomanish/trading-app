@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Sentiment')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('sentiment')}"></nav>
+<div class="container">
+    <div class="card">
+        <div class="card-title">Sentiment Snapshots (LLM Advisory — last 20)</div>
+        <div style="color:#555;font-size:12px;margin-bottom:12px">
+            The LLM advisory layer can only VETO trades. It never originates or sizes positions.
+            Failures default to NEUTRAL (no veto).
+        </div>
+        <table>
+            <thead><tr>
+                <th>Captured At</th><th>Sentiment</th><th>Confidence</th>
+                <th>Key Risks</th><th>Reasoning</th><th>Fallback</th>
+            </tr></thead>
+            <tbody>
+            <tr th:each="s : ${snapshots}">
+                <td th:text="${#temporals.format(s.capturedAt, 'MM-dd HH:mm')}" style="color:#666"></td>
+                <td>
+                    <span th:class="'badge badge-' + ${#strings.toLowerCase(s.sentiment)}"
+                          th:text="${s.sentiment}">NEUTRAL</span>
+                </td>
+                <td th:text="${#numbers.formatDecimal(s.confidence, 1, 2)}"></td>
+                <td th:text="${s.keyRisks}" style="color:#888;font-size:11px;max-width:200px"></td>
+                <td th:text="${s.reasoning}" style="color:#888;font-size:11px;max-width:250px"></td>
+                <td th:class="${s.fallback} ? 'yellow' : 'green'"
+                    th:text="${s.fallback} ? 'FALLBACK' : 'OK'"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

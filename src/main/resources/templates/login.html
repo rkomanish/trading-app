@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Login — Nifty AutoTrader</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0;
+               display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { background: #111; border: 1px solid #222; border-radius: 8px; padding: 40px; width: 360px; }
+        h1 { color: #00ff88; font-size: 20px; margin-bottom: 8px; }
+        .subtitle { color: #555; font-size: 12px; margin-bottom: 24px; }
+        label { display: block; color: #888; font-size: 12px; margin-bottom: 4px; }
+        input { width: 100%; padding: 10px; background: #1a1a1a; border: 1px solid #333;
+                color: #e0e0e0; border-radius: 4px; font-family: inherit; margin-bottom: 16px; }
+        button { width: 100%; padding: 12px; background: #004400; color: #00ff88;
+                 border: 1px solid #00ff88; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 14px; }
+        button:hover { background: #006600; }
+        .error { color: #ff8888; font-size: 12px; margin-bottom: 16px; padding: 8px; background: #2a0000; border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="login-box">
+    <h1>&#9651; NIFTY AUTOTRADER</h1>
+    <div class="subtitle">Autonomous NSE Options Trading System</div>
+    <div th:if="${param.error}" class="error">Invalid credentials</div>
+    <form method="post" th:action="@{/login}">
+        <label>Username</label>
+        <input type="text" name="username" autofocus/>
+        <label>Password</label>
+        <input type="password" name="password"/>
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <button type="submit">Login</button>
+    </form>
+</div>
+</body>
+</html>

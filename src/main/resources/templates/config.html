@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Configuration')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('config')}"></nav>
+<div class="container">
+    <div class="alert alert-warning">
+        Configuration is read-only. Change values in application.yml or environment variables and restart.
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-title">Risk Parameters</div>
+            <table>
+                <tr><td style="color:#666">Max Lots Per Position</td>
+                    <td th:text="${riskProps.maxLotsPerPosition}"></td>
+                    <td style="color:#444;font-size:11px" th:text="'(hard ceiling: ' + ${hardMaxLots} + ')'"></td></tr>
+                <tr><td style="color:#666">Max Trades Per Day</td>
+                    <td th:text="${riskProps.maxTradesPerDay}"></td>
+                    <td style="color:#444;font-size:11px" th:text="'(hard ceiling: ' + ${hardMaxTrades} + ')'"></td></tr>
+                <tr><td style="color:#666">Max Daily Loss</td>
+                    <td class="red" th:text="'₹' + ${riskProps.maxDailyLoss}"></td><td></td></tr>
+                <tr><td style="color:#666">Weekly Breaker (losing days)</td>
+                    <td th:text="${riskProps.weeklyCircuitBreakerLossDays}"></td><td></td></tr>
+                <tr><td style="color:#666">Entry Window</td>
+                    <td th:text="${riskProps.entryWindowStart} + ' – ' + ${riskProps.entryWindowEnd} + ' IST'"></td><td></td></tr>
+                <tr><td style="color:#666">Square-Off Time</td>
+                    <td th:text="${riskProps.squareOffTime} + ' IST'"></td><td></td></tr>
+                <tr><td style="color:#666">ATR Stop Multiplier</td>
+                    <td th:text="${riskProps.atrStopMultiplier}"></td><td></td></tr>
+                <tr><td style="color:#666">Fixed Stop %</td>
+                    <td th:text="${riskProps.fixedStopPercent} + '%'"></td><td></td></tr>
+                <tr><td style="color:#666">Nifty Lot Size</td>
+                    <td th:text="${lotSize}"></td><td></td></tr>
+            </table>
+        </div>
+        <div class="card">
+            <div class="card-title">Trading Mode</div>
+            <table>
+                <tr><td style="color:#666">Live Trading</td>
+                    <td th:class="${tradingProps.liveEnabled} ? 'red' : 'green'"
+                        th:text="${tradingProps.liveEnabled} ? 'ENABLED ⚠' : 'DISABLED (paper)'"></td></tr>
+                <tr><td style="color:#666">Paper Slippage</td>
+                    <td th:text="${tradingProps.paperSlippagePercent} + '%'"></td></tr>
+                <tr><td style="color:#666">Brokerage / Round Trip</td>
+                    <td th:text="'₹' + ${tradingProps.brokeragePerRoundTrip}"></td></tr>
+                <tr><td style="color:#666">Option Selling</td>
+                    <td class="red">FORBIDDEN (v1)</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Backtest')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('backtest')}"></nav>
+<div class="container">
+    <div class="card">
+        <div class="card-title">Walk-Forward Backtest Runner</div>
+        <form method="post" th:action="@{/backtest/run}">
+            <div class="grid-3">
+                <div class="form-group">
+                    <label>Strategy</label>
+                    <select name="strategyName">
+                        <option th:each="s : ${strategies}" th:value="${s}"
+                                th:text="${s}"
+                                th:selected="${s == selectedStrategy}"></option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Symbol</label>
+                    <input type="text" name="symbol" th:value="${symbol ?: 'NIFTY'}"/>
+                </div>
+                <div class="form-group">
+                    <label>Walk-Forward Windows</label>
+                    <select name="windows">
+                        <option value="2">2 windows</option>
+                        <option value="4" selected>4 windows</option>
+                        <option value="6">6 windows</option>
+                    </select>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Run Backtest</button>
+        </form>
+    </div>
+
+    <div class="alert alert-danger" th:if="${error}" th:text="${error}"></div>
+
+    <div th:if="${result != null}">
+        <div th:class="${result.promotable} ? 'alert alert-success' : 'alert alert-danger'"
+             th:text="${result.verdict}"></div>
+
+        <div class="grid-4">
+            <div class="card">
+                <div class="card-title">Total Trades</div>
+                <div class="stat-value" th:text="${result.totalTrades}">0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Win Rate</div>
+                <div class="stat-value" th:class="${result.winRate > 0.5} ? 'stat-value green' : 'stat-value red'"
+                     th:text="${#numbers.formatDecimal(result.winRate * 100, 1, 1)} + '%'">0%</div>
+                <div class="stat-label" th:text="${result.winningTrades} + ' W / ' + ${result.losingTrades} + ' L'"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Net P&amp;L (after costs)</div>
+                <div class="stat-value"
+                     th:class="${result.totalNetPnl >= 0} ? 'stat-value green' : 'stat-value red'"
+                     th:text="'₹' + ${#numbers.formatDecimal(result.totalNetPnl, 1, 2)}">₹0</div>
+                <div class="stat-label" th:text="'Costs: ₹' + ${#numbers.formatDecimal(result.totalCosts, 1, 2)}"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Profit Factor</div>
+                <div class="stat-value"
+                     th:class="${result.profitFactor > 1} ? 'stat-value green' : 'stat-value red'"
+                     th:text="${#numbers.formatDecimal(result.profitFactor, 1, 2)}">0</div>
+            </div>
+        </div>
+        <div class="grid-3">
+            <div class="card">
+                <div class="card-title">Expectancy / Trade</div>
+                <div class="stat-value"
+                     th:class="${result.expectancyPerTrade >= 0} ? 'stat-value green' : 'stat-value red'"
+                     th:text="'₹' + ${#numbers.formatDecimal(result.expectancyPerTrade, 1, 2)}">₹0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Max Drawdown</div>
+                <div class="stat-value red"
+                     th:text="'₹' + ${#numbers.formatDecimal(result.maxDrawdown, 1, 2)}">₹0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Avg Win / Avg Loss</div>
+                <div>
+                    <span class="green" th:text="'₹' + ${#numbers.formatDecimal(result.avgWin, 1, 2)}">₹0</span>
+                    <span style="color:#666"> / </span>
+                    <span class="red" th:text="'₹' + ${#numbers.formatDecimal(result.avgLoss, 1, 2)}">₹0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
