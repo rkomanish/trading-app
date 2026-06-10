@@ -3,6 +3,9 @@ package com.niftyautotrader.controller;
 import com.niftyautotrader.repository.CandleRepository;
 import com.niftyautotrader.service.backtest.BacktestEngine;
 import com.niftyautotrader.service.backtest.BacktestResult;
+import com.niftyautotrader.service.backtest.CandleCsvImporter;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import com.niftyautotrader.service.strategy.TradingStrategy;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -25,15 +28,37 @@ public class BacktestController {
 
     private final BacktestEngine backtestEngine;
     private final CandleRepository candleRepo;
+    private final CandleCsvImporter csvImporter;
     private final Map<String, TradingStrategy> strategiesByName;
 
     public BacktestController(BacktestEngine backtestEngine,
                                CandleRepository candleRepo,
+                               CandleCsvImporter csvImporter,
                                List<TradingStrategy> strategies) {
         this.backtestEngine = backtestEngine;
         this.candleRepo = candleRepo;
+        this.csvImporter = csvImporter;
         this.strategiesByName = strategies.stream()
             .collect(Collectors.toMap(TradingStrategy::getName, s -> s));
+    }
+
+    @PostMapping("/import-csv")
+    public String importCsv(@RequestParam("file") MultipartFile file,
+                             @RequestParam(defaultValue = "NIFTY") String symbol,
+                             @RequestParam(defaultValue = "5m") String timeframe,
+                             RedirectAttributes ra) {
+        if (file.isEmpty()) {
+            ra.addFlashAttribute("importError", "No file selected");
+            return "redirect:/backtest";
+        }
+        var result = csvImporter.importCsv(file, symbol, timeframe);
+        ra.addFlashAttribute("importMessage", String.format(
+            "Imported %d candles (%d duplicates skipped, %d parse errors) for %s [%s]",
+            result.imported(), result.duplicates(), result.skipped(), symbol, timeframe));
+        if (!result.errors().isEmpty()) {
+            ra.addFlashAttribute("importError", String.join("; ", result.errors()));
+        }
+        return "redirect:/backtest";
     }
 
     @GetMapping
@@ -55,7 +80,7 @@ public class BacktestController {
             return "backtest";
         }
 
-        ZonedDateTime cutoff = ZonedDateTime.now(IST).minusMonths(6);
+        ZonedDateTime cutoff = ZonedDateTime.now(IST).minusYears(10);
         var candles = candleRepo.findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(
             symbol, "5m", cutoff);
 
