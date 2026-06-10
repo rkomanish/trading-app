@@ -4,6 +4,10 @@ import com.niftyautotrader.repository.CandleRepository;
 import com.niftyautotrader.service.backtest.BacktestEngine;
 import com.niftyautotrader.service.backtest.BacktestResult;
 import com.niftyautotrader.service.backtest.CandleCsvImporter;
+import com.niftyautotrader.service.marketdata.YahooFinanceService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import com.niftyautotrader.service.strategy.TradingStrategy;
@@ -29,17 +33,59 @@ public class BacktestController {
     private final BacktestEngine backtestEngine;
     private final CandleRepository candleRepo;
     private final CandleCsvImporter csvImporter;
+    private final YahooFinanceService yahooService;
     private final Map<String, TradingStrategy> strategiesByName;
 
     public BacktestController(BacktestEngine backtestEngine,
                                CandleRepository candleRepo,
                                CandleCsvImporter csvImporter,
+                               YahooFinanceService yahooService,
                                List<TradingStrategy> strategies) {
         this.backtestEngine = backtestEngine;
         this.candleRepo = candleRepo;
         this.csvImporter = csvImporter;
+        this.yahooService = yahooService;
         this.strategiesByName = strategies.stream()
             .collect(Collectors.toMap(TradingStrategy::getName, s -> s));
+    }
+
+    /** Fetch last month of candles from Yahoo Finance straight into the DB. */
+    @PostMapping("/fetch-yahoo")
+    public String fetchYahoo(@RequestParam(defaultValue = "^NSEI") String yahooSymbol,
+                              @RequestParam(defaultValue = "NIFTY") String symbol,
+                              @RequestParam(defaultValue = "5m") String interval,
+                              @RequestParam(defaultValue = "1mo") String range,
+                              RedirectAttributes ra) {
+        var result = yahooService.fetchAndStore(yahooSymbol, symbol, interval, range);
+        if (result.isSuccess()) {
+            ra.addFlashAttribute("importMessage", String.format(
+                "Yahoo: fetched %d candles, saved %d new (%d already existed) for %s [%s, %s]",
+                result.fetched(), result.saved(), result.duplicates(), symbol, interval, range));
+        } else {
+            ra.addFlashAttribute("importError", result.error());
+        }
+        return "redirect:/backtest";
+    }
+
+    /** Download last month of Yahoo candles as a CSV file in our import format. */
+    @GetMapping("/download-yahoo-csv")
+    public ResponseEntity<String> downloadYahooCsv(
+            @RequestParam(defaultValue = "^NSEI") String yahooSymbol,
+            @RequestParam(defaultValue = "NIFTY") String symbol,
+            @RequestParam(defaultValue = "5m") String interval,
+            @RequestParam(defaultValue = "1mo") String range) {
+        try {
+            String csv = yahooService.fetchAsCsv(yahooSymbol, symbol, interval, range);
+            String filename = String.format("%s_%s_%s.csv", symbol, interval, range);
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(csv);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("Yahoo fetch failed: " + e.getMessage());
+        }
     }
 
     @PostMapping("/import-csv")
