@@ -88,6 +88,11 @@ public class BacktestController {
         }
     }
 
+    @GetMapping("/import-csv")
+    public String importCsvGet() {
+        return "redirect:/backtest";
+    }
+
     @PostMapping("/import-csv")
     public String importCsv(@RequestParam("file") MultipartFile file,
                              @RequestParam(defaultValue = "NIFTY") String symbol,
