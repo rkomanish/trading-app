@@ -1,7 +1,7 @@
 package com.niftyautotrader.controller;
 
 import com.niftyautotrader.broker.Broker;
-import com.niftyautotrader.broker.PaperBroker;
+import com.niftyautotrader.service.paper.PaperBroker;
 import com.niftyautotrader.repository.SignalRepository;
 import com.niftyautotrader.service.strategy.StrategyEngine;
 import org.springframework.stereotype.Controller;
