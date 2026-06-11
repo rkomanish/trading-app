@@ -124,35 +124,66 @@ public class BacktestEngine {
                 double target = signal.getSuggestedTarget() != null
                     ? signal.getSuggestedTarget().doubleValue() : entry * 1.3;
 
-                // Time-exit default at bar i+40
-                int timeExitBar = Math.min(i + 40, candles.size() - 1);
+                // Time-exit default at bar i+25 (reduced from 40 — less drift time)
+                int maxBars = 25;
+                int timeExitBar = Math.min(i + maxBars, candles.size() - 1);
                 double exitPrice = candles.get(timeExitBar).getClose().doubleValue();
                 String exitReason = "TIME_EXIT";
                 ZonedDateTime exitTime = candles.get(timeExitBar).getOpenTime();
 
-                for (int j = i + 1; j < Math.min(i + 40, candles.size()); j++) {
+                // Trailing stop: track dynamic SL that moves to protect profit
+                double trailSl       = sl;
+                double initialRisk   = Math.abs(entry - sl);
+                boolean breakEvenSet = false;
+
+                for (int j = i + 1; j < Math.min(i + maxBars, candles.size()); j++) {
                     Candle bar = candles.get(j);
+                    double barHigh = bar.getHigh().doubleValue();
+                    double barLow  = bar.getLow().doubleValue();
+
                     if (isBull) {
-                        if (bar.getLow().doubleValue() <= sl) {
-                            exitPrice = sl * (1 - SLIPPAGE);
-                            exitReason = "STOP_LOSS";
+                        // Trailing stop logic for LONG_CE
+                        double favorMove = barHigh - entry;
+                        if (!breakEvenSet && favorMove >= initialRisk) {
+                            // Price moved 1×risk in favor → move SL to breakeven
+                            trailSl = entry + SLIPPAGE * entry; // tiny buffer above entry
+                            breakEvenSet = true;
+                        }
+                        if (breakEvenSet && favorMove >= initialRisk * 1.5) {
+                            // Price moved 1.5×risk → trail SL to lock in 0.5×risk profit
+                            double newTrail = entry + initialRisk * 0.5;
+                            if (newTrail > trailSl) trailSl = newTrail;
+                        }
+                        if (barLow <= trailSl) {
+                            exitPrice = trailSl * (1 - SLIPPAGE);
+                            exitReason = breakEvenSet ? "TRAIL_STOP" : "STOP_LOSS";
                             exitTime = bar.getOpenTime();
                             break;
                         }
-                        if (bar.getHigh().doubleValue() >= target) {
+                        if (barHigh >= target) {
                             exitPrice = target * (1 - SLIPPAGE);
                             exitReason = "TARGET";
                             exitTime = bar.getOpenTime();
                             break;
                         }
                     } else {
-                        if (bar.getHigh().doubleValue() >= sl) {
-                            exitPrice = sl * (1 + SLIPPAGE);
-                            exitReason = "STOP_LOSS";
+                        // Trailing stop logic for LONG_PE
+                        double favorMove = entry - barLow;
+                        if (!breakEvenSet && favorMove >= initialRisk) {
+                            trailSl = entry - SLIPPAGE * entry;
+                            breakEvenSet = true;
+                        }
+                        if (breakEvenSet && favorMove >= initialRisk * 1.5) {
+                            double newTrail = entry - initialRisk * 0.5;
+                            if (newTrail < trailSl) trailSl = newTrail;
+                        }
+                        if (barHigh >= trailSl) {
+                            exitPrice = trailSl * (1 + SLIPPAGE);
+                            exitReason = breakEvenSet ? "TRAIL_STOP" : "STOP_LOSS";
                             exitTime = bar.getOpenTime();
                             break;
                         }
-                        if (bar.getLow().doubleValue() <= target) {
+                        if (barLow <= target) {
                             exitPrice = target * (1 + SLIPPAGE);
                             exitReason = "TARGET";
                             exitTime = bar.getOpenTime();

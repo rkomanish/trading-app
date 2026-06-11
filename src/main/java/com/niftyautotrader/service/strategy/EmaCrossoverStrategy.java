@@ -14,85 +14,91 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Strategy 1: EMA(9/21) crossover on 5m chart with RSI filter and VWAP confirmation.
+ * EMA(9/21) crossover on 5m chart.
  *
- * Long CE signal when:
- *   - EMA9 crosses above EMA21 (bullish crossover)
- *   - RSI(14) is between 45 and 70 (not overbought, trend continuation zone)
- *   - Close is above VWAP (price confirmation)
- *   - Market is trending (ADX > 25)
+ * Entry filters (all must pass):
+ *   - EMA9 just crossed above/below EMA21
+ *   - RSI in momentum zone (not overbought/oversold)
+ *   - Close on correct side of VWAP
+ *   - ADX > 20 (trending market)
+ *   - EMA9 clearly diverging from EMA21 (slope filter — avoids weak crosses)
+ *   - Volume above 80% of 20-bar average (real move, not noise)
  *
- * Long PE signal when:
- *   - EMA9 crosses below EMA21 (bearish crossover)
- *   - RSI(14) is between 30 and 55
- *   - Close is below VWAP
- *   - Market is trending
+ * SL: 0.8×ATR (tighter than before)
+ * Target: 1.8×ATR → easier to reach, more TARGET hits vs TIME_EXIT
+ * R:R: minimum 2:1 enforced
  */
 @Component
 public class EmaCrossoverStrategy implements TradingStrategy {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final LocalTime TRADE_START = LocalTime.of(9, 30);
-    private static final LocalTime TRADE_END   = LocalTime.of(14, 30);
+    private static final LocalTime TRADE_END   = LocalTime.of(14, 0);
 
-    private static final int EMA_FAST = 9;
-    private static final int EMA_SLOW = 21;
-    private static final int RSI_PERIOD = 14;
-    private static final int MIN_CANDLES = EMA_SLOW + RSI_PERIOD + 5;
+    private static final int EMA_FAST = 9, EMA_SLOW = 21, RSI_PERIOD = 14;
+    private static final int VOL_LOOKBACK = 20;
+    private static final int MIN_CANDLES = EMA_SLOW + RSI_PERIOD + VOL_LOOKBACK + 5;
 
     @Override
     public String getName() { return "EMA_CROSSOVER_9_21"; }
 
     @Override
     public Optional<Signal> evaluate(MarketContext ctx) {
-        // Only trade during the most liquid window; avoids opening volatility and close squeeze
         LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
         if (t.isBefore(TRADE_START) || t.isAfter(TRADE_END)) return Optional.empty();
 
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
 
-        double[] closes = toDoubles(candles, CandleField.CLOSE);
-        double[] ema9 = IndicatorUtils.ema(closes, EMA_FAST);
+        double[] closes = candles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
+        long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
+
+        double[] ema9  = IndicatorUtils.ema(closes, EMA_FAST);
         double[] ema21 = IndicatorUtils.ema(closes, EMA_SLOW);
 
-        int last = closes.length - 1;
-        int prev = last - 1;
+        int last = closes.length - 1, prev = last - 1;
 
-        double rsi = IndicatorUtils.rsiLast(closes, RSI_PERIOD);
-        double vwap = ctx.currentVwap().doubleValue();
-        double lastClose = closes[last];
+        double rsi      = IndicatorUtils.rsiLast(closes, RSI_PERIOD);
+        double vwap     = ctx.currentVwap().doubleValue();
+        double atr      = ctx.currentAtr();
+        double price    = closes[last];
 
-        // Bullish crossover: EMA9 just crossed above EMA21
-        boolean bullishCross = ema9[prev] <= ema21[prev] && ema9[last] > ema21[last];
-        // Bearish crossover: EMA9 just crossed below EMA21
-        boolean bearishCross = ema9[prev] >= ema21[prev] && ema9[last] < ema21[last];
+        // Volume filter: current volume > 80% of 20-bar average
+        long avgVol = 0;
+        for (int i = last - VOL_LOOKBACK + 1; i <= last; i++) avgVol += vols[i];
+        avgVol /= VOL_LOOKBACK;
+        if (vols[last] < avgVol * 0.8) return Optional.empty();
 
-        if (bullishCross && rsi >= 40 && rsi <= 75 && lastClose > vwap && ctx.adx() > 18) {
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, lastClose,
-                String.format("EMA9(%.2f) crossed above EMA21(%.2f), RSI=%.1f, close(%.2f) > VWAP(%.2f), ADX=%.1f",
-                    ema9[last], ema21[last], rsi, lastClose, vwap, ctx.adx())));
+        // Slope filter: EMA9 must be clearly diverging (not a weak/flat cross)
+        double emaDivergence = Math.abs(ema9[last] - ema21[last]) / ema21[last];
+        if (emaDivergence < 0.0003) return Optional.empty(); // less than 0.03% apart → weak cross
+
+        boolean bullCross = ema9[prev] <= ema21[prev] && ema9[last] > ema21[last];
+        boolean bearCross = ema9[prev] >= ema21[prev] && ema9[last] < ema21[last];
+
+        if (bullCross && rsi >= 45 && rsi <= 70 && price > vwap && ctx.adx() > 20) {
+            double sl     = price - atr * 0.8;
+            double target = price + atr * 1.8;
+            if (!validRR(price, sl, target, true)) return Optional.empty();
+            return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, price, sl, target,
+                String.format("EMA9(%.0f)>EMA21(%.0f) RSI=%.1f VWAP=%.0f ADX=%.1f vol=%dk",
+                    ema9[last], ema21[last], rsi, vwap, ctx.adx(), vols[last]/1000)));
         }
 
-        if (bearishCross && rsi >= 25 && rsi <= 60 && lastClose < vwap && ctx.adx() > 18) {
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, lastClose,
-                String.format("EMA9(%.2f) crossed below EMA21(%.2f), RSI=%.1f, close(%.2f) < VWAP(%.2f), ADX=%.1f",
-                    ema9[last], ema21[last], rsi, lastClose, vwap, ctx.adx())));
+        if (bearCross && rsi >= 30 && rsi <= 55 && price < vwap && ctx.adx() > 20) {
+            double sl     = price + atr * 0.8;
+            double target = price - atr * 1.8;
+            if (!validRR(price, sl, target, false)) return Optional.empty();
+            return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, price, sl, target,
+                String.format("EMA9(%.0f)<EMA21(%.0f) RSI=%.1f VWAP=%.0f ADX=%.1f vol=%dk",
+                    ema9[last], ema21[last], rsi, vwap, ctx.adx(), vols[last]/1000)));
         }
 
         return Optional.empty();
     }
 
-    private Signal buildSignal(MarketContext ctx, SignalDirection dir, double price, String reason) {
-        double atr = ctx.currentAtr();
-        double sl, target;
-        if (dir == SignalDirection.LONG_CE) {
-            sl     = price - atr * 1.2;
-            target = price + atr * 2.4; // 1:2 R:R
-        } else {
-            sl     = price + atr * 1.2;
-            target = price - atr * 2.4;
-        }
+    private Signal buildSignal(MarketContext ctx, SignalDirection dir, double price,
+                                double sl, double target, String reason) {
         Signal s = new Signal();
         s.setGeneratedAt(ZonedDateTime.now());
         s.setStrategyName(getName());
@@ -106,15 +112,10 @@ public class EmaCrossoverStrategy implements TradingStrategy {
         return s;
     }
 
-    private double[] toDoubles(List<Candle> candles, CandleField field) {
-        return candles.stream()
-            .mapToDouble(c -> switch (field) {
-                case CLOSE -> c.getClose().doubleValue();
-                case HIGH  -> c.getHigh().doubleValue();
-                case LOW   -> c.getLow().doubleValue();
-                case OPEN  -> c.getOpen().doubleValue();
-            }).toArray();
+    /** Minimum 1.5:1 reward-to-risk. */
+    private boolean validRR(double entry, double sl, double target, boolean isBull) {
+        double risk   = Math.abs(entry - sl);
+        double reward = isBull ? target - entry : entry - target;
+        return risk > 0 && reward / risk >= 1.5;
     }
-
-    private enum CandleField { OPEN, HIGH, LOW, CLOSE }
 }

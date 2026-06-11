@@ -10,28 +10,23 @@ import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Strategy 7: Bollinger Band Squeeze Breakout on 5m candles.
+ * Bollinger Band Squeeze Breakout — 5m candles.
  *
- * A "squeeze" occurs when BB width (upper - lower) shrinks to its lowest
- * in the last 20 bars — indicating low volatility / consolidation.
- * The first expansion (band widening) after a squeeze is the breakout signal.
+ * Squeeze = BB width at 20-bar minimum. First expansion = breakout signal.
  *
- * LONG_CE when:
- *   - BB squeeze confirmed (width at 20-bar low)
- *   - Current bar closes ABOVE upper BB (upside breakout)
- *   - Volume above 20-bar average (conviction)
- *
- * LONG_PE when:
- *   - BB squeeze confirmed
- *   - Current bar closes BELOW lower BB (downside breakout)
- *   - Volume above 20-bar average
- *
- * SL: midline (BB middle = 20-period SMA); Target: 2.5× ATR from entry.
- * Time: 09:30 – 13:00 IST (avoid late-day low volume squeezes).
+ * Loss-control improvements:
+ *   - SL capped at 1.0×ATR from entry (was: midline which could be 150+ points away)
+ *   - ADX filter: breakout direction must align with ADX trend (ADX > 18)
+ *   - Volume threshold raised: 1.2× → 1.5× average (stronger conviction required)
+ *   - Squeeze threshold tightened: 1.15× → 1.05× minimum width
+ *     (must be a real squeeze, not just slightly narrow bands)
+ *   - Price must close clearly outside the band (not just pierce by 1 tick)
+ *   - Minimum R:R check: 1.5:1
  */
 @Component
 public class BollingerSqueezeStrategy implements TradingStrategy {
@@ -42,7 +37,7 @@ public class BollingerSqueezeStrategy implements TradingStrategy {
     private static final int BB_PERIOD = 20;
     private static final double BB_MULT = 2.0;
     private static final int SQUEEZE_LOOKBACK = 20;
-    private static final int MIN_CANDLES = BB_PERIOD + SQUEEZE_LOOKBACK + 5;
+    private static final int MIN_CANDLES = BB_PERIOD + SQUEEZE_LOOKBACK + 10;
 
     @Override
     public String getName() { return "BOLLINGER_SQUEEZE_BREAKOUT"; }
@@ -51,6 +46,7 @@ public class BollingerSqueezeStrategy implements TradingStrategy {
     public Optional<Signal> evaluate(MarketContext ctx) {
         LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
         if (t.isBefore(START) || t.isAfter(END)) return Optional.empty();
+        if (ctx.adx() < 18) return Optional.empty(); // need some directional bias
 
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
@@ -59,51 +55,62 @@ public class BollingerSqueezeStrategy implements TradingStrategy {
         long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
         int n = closes.length;
 
-        // Compute BB width for all bars in the lookback window
+        // Compute BB width over lookback — find minimum
         double minWidth = Double.MAX_VALUE;
-        double maxWidth = Double.MIN_VALUE;
         for (int i = n - SQUEEZE_LOOKBACK; i < n - 1; i++) {
-            double[] slice = java.util.Arrays.copyOfRange(closes, Math.max(0, i - BB_PERIOD + 1), i + 1);
+            double[] slice = Arrays.copyOfRange(closes, Math.max(0, i - BB_PERIOD + 1), i + 1);
             if (slice.length < BB_PERIOD) continue;
             var bb = IndicatorUtils.bollingerBandsLast(slice, BB_PERIOD, BB_MULT);
             double width = bb.upper() - bb.lower();
             if (width < minWidth) minWidth = width;
-            if (width > maxWidth) maxWidth = width;
         }
 
         var bbNow = IndicatorUtils.bollingerBandsLast(closes, BB_PERIOD, BB_MULT);
         double currentWidth = bbNow.upper() - bbNow.lower();
 
-        // Squeeze: current width at or near historical min
-        boolean squeezeActive = currentWidth <= minWidth * 1.15;
-        if (!squeezeActive) return Optional.empty();
+        // Strict squeeze: current width must be very close to the 20-bar minimum
+        if (currentWidth > minWidth * 1.05) return Optional.empty();
 
         double price = closes[n - 1];
         double atr   = ctx.currentAtr();
 
-        // Volume confirmation: current bar volume above 20-bar average
+        // Volume: need 1.5× average (strong breakout conviction)
         long avgVol = 0;
         for (int i = n - SQUEEZE_LOOKBACK; i < n; i++) avgVol += vols[i];
         avgVol /= SQUEEZE_LOOKBACK;
-        boolean highVolume = vols[n - 1] > avgVol * 1.2;
+        if (vols[n - 1] < avgVol * 1.5) return Optional.empty();
 
-        if (price > bbNow.upper() && highVolume) {
-            double sl     = bbNow.middle(); // midline as SL
-            double target = price + atr * 2.5;
+        // Price must close clearly outside band (at least 0.1×ATR beyond)
+        if (price > bbNow.upper() + atr * 0.1) {
+            // SL = midline OR 1×ATR below entry — whichever is closer (less loss)
+            double slMid = bbNow.middle();
+            double slAtr = price - atr * 1.0;
+            double sl    = Math.max(slMid, slAtr); // higher of the two = less risk
+            double target = price + atr * 2.0;
+            if (!validRR(price, sl, target, true)) return Optional.empty();
             return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, sl, target,
-                String.format("BB squeeze breakout UP: width=%.1f min=%.1f vol=%dk>avg%dk",
-                    currentWidth, minWidth, vols[n-1]/1000, avgVol/1000)));
+                String.format("BB squeeze UP: width=%.1f/min=%.1f close=%.0f>upper=%.0f vol=%dx",
+                    currentWidth, minWidth, price, bbNow.upper(), vols[n-1]/Math.max(1,avgVol))));
         }
 
-        if (price < bbNow.lower() && highVolume) {
-            double sl     = bbNow.middle();
-            double target = price - atr * 2.5;
+        if (price < bbNow.lower() - atr * 0.1) {
+            double slMid = bbNow.middle();
+            double slAtr = price + atr * 1.0;
+            double sl    = Math.min(slMid, slAtr); // lower of the two = less risk
+            double target = price - atr * 2.0;
+            if (!validRR(price, sl, target, false)) return Optional.empty();
             return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, sl, target,
-                String.format("BB squeeze breakout DOWN: width=%.1f min=%.1f vol=%dk>avg%dk",
-                    currentWidth, minWidth, vols[n-1]/1000, avgVol/1000)));
+                String.format("BB squeeze DOWN: width=%.1f/min=%.1f close=%.0f<lower=%.0f vol=%dx",
+                    currentWidth, minWidth, price, bbNow.lower(), vols[n-1]/Math.max(1,avgVol))));
         }
 
         return Optional.empty();
+    }
+
+    private boolean validRR(double entry, double sl, double target, boolean isBull) {
+        double risk   = Math.abs(entry - sl);
+        double reward = isBull ? target - entry : entry - target;
+        return risk > 0 && reward / risk >= 1.5;
     }
 
     private Signal signal(MarketContext ctx, SignalDirection dir, double price,

@@ -14,29 +14,29 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Strategy 5: MACD Signal-Line Crossover on 5m candles.
+ * MACD Signal-Line Crossover — 5m candles.
  *
- * MACD = EMA(12) - EMA(26). Signal line = EMA(9) of MACD.
- * Histogram = MACD - Signal.
+ * Histogram flip + VWAP + ADX + RSI confirmation.
  *
- * LONG_CE when: histogram flips positive (MACD crosses above signal)
- *   AND close > VWAP AND ADX > 18
- *
- * LONG_PE when: histogram flips negative (MACD crosses below signal)
- *   AND close < VWAP AND ADX > 18
- *
- * MACD is smoother than raw EMA crossover — fewer whipsaws, better trend confirmation.
- * Trade window: 09:30 – 14:00 IST only.
+ * Loss-control improvements:
+ *   - Added RSI confirmation: CE requires RSI > 50, PE requires RSI < 50
+ *     (ensures momentum direction aligns with MACD signal)
+ *   - SL tightened: 1.2×ATR → 0.8×ATR
+ *   - Target reduced: 2.4×ATR → 1.8×ATR (more TARGET hits vs TIME_EXIT)
+ *   - ADX threshold raised: 18 → 22
+ *   - Volume filter: breakout candle volume > 90% of 20-bar average
+ *   - Require histogram growing (not just flipped — avoid small crosses)
  */
 @Component
 public class MACDCrossoverStrategy implements TradingStrategy {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime START = LocalTime.of(9, 30);
-    private static final LocalTime END   = LocalTime.of(14, 0);
+    private static final LocalTime START = LocalTime.of(9, 45);
+    private static final LocalTime END   = LocalTime.of(13, 30);
 
-    private static final int FAST = 12, SLOW = 26, SIGNAL = 9;
-    private static final int MIN_CANDLES = SLOW + SIGNAL + 5;
+    private static final int FAST = 12, SLOW = 26, SIGNAL_P = 9, RSI_PERIOD = 14;
+    private static final int VOL_LOOKBACK = 20;
+    private static final int MIN_CANDLES = SLOW + SIGNAL_P + RSI_PERIOD + VOL_LOOKBACK + 5;
 
     @Override
     public String getName() { return "MACD_CROSSOVER"; }
@@ -45,48 +45,63 @@ public class MACDCrossoverStrategy implements TradingStrategy {
     public Optional<Signal> evaluate(MarketContext ctx) {
         LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
         if (t.isBefore(START) || t.isAfter(END)) return Optional.empty();
-        if (ctx.adx() < 18) return Optional.empty();
+        if (ctx.adx() < 22) return Optional.empty();
 
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
 
         double[] closes = candles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
-        double[] emaFast = IndicatorUtils.ema(closes, FAST);
-        double[] emaSlow = IndicatorUtils.ema(closes, SLOW);
+        long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
 
+        // Volume filter
         int n = closes.length;
-        double[] macd = new double[n];
+        long avgVol = 0;
+        for (int i = n - VOL_LOOKBACK; i < n; i++) avgVol += vols[i];
+        avgVol /= VOL_LOOKBACK;
+        if (vols[n - 1] < avgVol * 0.9) return Optional.empty();
+
+        double[] emaFast   = IndicatorUtils.ema(closes, FAST);
+        double[] emaSlow   = IndicatorUtils.ema(closes, SLOW);
+        double[] macd      = new double[n];
         for (int i = 0; i < n; i++) macd[i] = emaFast[i] - emaSlow[i];
+        double[] signalLine = IndicatorUtils.ema(macd, SIGNAL_P);
 
-        double[] signalLine = IndicatorUtils.ema(macd, SIGNAL);
-        int last = n - 1, prev = n - 2;
-
-        double histNow  = macd[last] - signalLine[last];
-        double histPrev = macd[prev] - signalLine[prev];
+        int last = n - 1, prev = n - 2, prev2 = n - 3;
+        double histNow   = macd[last]  - signalLine[last];
+        double histPrev  = macd[prev]  - signalLine[prev];
+        double histPrev2 = macd[prev2] - signalLine[prev2];
 
         boolean bullFlip = histPrev <= 0 && histNow > 0;
         boolean bearFlip = histPrev >= 0 && histNow < 0;
 
+        // Histogram must be growing (not just flipped by tiny amount)
+        boolean histGrowingBull = bullFlip && Math.abs(histNow) > Math.abs(histPrev);
+        boolean histGrowingBear = bearFlip && Math.abs(histNow) > Math.abs(histPrev);
+
         double price = closes[last];
         double vwap  = ctx.currentVwap().doubleValue();
         double atr   = ctx.currentAtr();
+        double rsi   = IndicatorUtils.rsiLast(closes, RSI_PERIOD);
 
-        if (bullFlip && price > vwap) {
-            return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, atr,
-                String.format("MACD bull flip hist=%.2f→%.2f VWAP=%.2f ADX=%.1f",
-                    histPrev, histNow, vwap, ctx.adx())));
+        if (histGrowingBull && price > vwap && rsi > 50) {
+            double sl     = price - atr * 0.8;
+            double target = price + atr * 1.8;
+            return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, sl, target,
+                String.format("MACD bull hist=%.1f→%.1f RSI=%.1f VWAP=%.0f ADX=%.1f",
+                    histPrev, histNow, rsi, vwap, ctx.adx())));
         }
-        if (bearFlip && price < vwap) {
-            return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, atr,
-                String.format("MACD bear flip hist=%.2f→%.2f VWAP=%.2f ADX=%.1f",
-                    histPrev, histNow, vwap, ctx.adx())));
+        if (histGrowingBear && price < vwap && rsi < 50) {
+            double sl     = price + atr * 0.8;
+            double target = price - atr * 1.8;
+            return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, sl, target,
+                String.format("MACD bear hist=%.1f→%.1f RSI=%.1f VWAP=%.0f ADX=%.1f",
+                    histPrev, histNow, rsi, vwap, ctx.adx())));
         }
         return Optional.empty();
     }
 
-    private Signal signal(MarketContext ctx, SignalDirection dir, double price, double atr, String reason) {
-        double sl     = dir == SignalDirection.LONG_CE ? price - atr * 1.2 : price + atr * 1.2;
-        double target = dir == SignalDirection.LONG_CE ? price + atr * 2.4 : price - atr * 2.4;
+    private Signal signal(MarketContext ctx, SignalDirection dir, double price,
+                           double sl, double target, String reason) {
         Signal s = new Signal();
         s.setGeneratedAt(ZonedDateTime.now());
         s.setStrategyName(getName());
