@@ -7,6 +7,8 @@ import com.niftyautotrader.service.indicators.IndicatorUtils;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -29,6 +31,10 @@ import java.util.Optional;
 @Component
 public class EmaCrossoverStrategy implements TradingStrategy {
 
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime TRADE_START = LocalTime.of(9, 30);
+    private static final LocalTime TRADE_END   = LocalTime.of(14, 30);
+
     private static final int EMA_FAST = 9;
     private static final int EMA_SLOW = 21;
     private static final int RSI_PERIOD = 14;
@@ -39,6 +45,10 @@ public class EmaCrossoverStrategy implements TradingStrategy {
 
     @Override
     public Optional<Signal> evaluate(MarketContext ctx) {
+        // Only trade during the most liquid window; avoids opening volatility and close squeeze
+        LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
+        if (t.isBefore(TRADE_START) || t.isAfter(TRADE_END)) return Optional.empty();
+
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
 
@@ -74,14 +84,23 @@ public class EmaCrossoverStrategy implements TradingStrategy {
     }
 
     private Signal buildSignal(MarketContext ctx, SignalDirection dir, double price, String reason) {
+        double atr = ctx.currentAtr();
+        double sl, target;
+        if (dir == SignalDirection.LONG_CE) {
+            sl     = price - atr * 1.2;
+            target = price + atr * 2.4; // 1:2 R:R
+        } else {
+            sl     = price + atr * 1.2;
+            target = price - atr * 2.4;
+        }
         Signal s = new Signal();
         s.setGeneratedAt(ZonedDateTime.now());
         s.setStrategyName(getName());
         s.setSymbol(ctx.symbol());
         s.setDirection(dir);
         s.setSuggestedEntry(BigDecimal.valueOf(price));
-        s.setSuggestedStopLoss(BigDecimal.valueOf(price - ctx.currentAtr() * 1.5));
-        s.setSuggestedTarget(BigDecimal.valueOf(price + ctx.currentAtr() * 3.0));
+        s.setSuggestedStopLoss(BigDecimal.valueOf(sl));
+        s.setSuggestedTarget(BigDecimal.valueOf(target));
         s.setLots(1);
         s.setReasoning(reason);
         return s;

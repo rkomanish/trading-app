@@ -24,8 +24,8 @@ import java.util.Optional;
 @Component
 public class SupertrendFollowerStrategy implements TradingStrategy {
 
-    private static final int ST_PERIOD = 10;
-    private static final double ST_MULTIPLIER = 3.0;
+    private static final int ST_PERIOD = 7;        // faster response on 15m
+    private static final double ST_MULTIPLIER = 2.0; // tighter band → realistic SL/target
     private static final int MIN_CANDLES = ST_PERIOD + 5;
 
     @Override

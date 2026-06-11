@@ -86,16 +86,27 @@ public class BacktestEngine {
     private List<BacktestTrade> simulateWindow(TradingStrategy strategy, List<Candle> candles) {
         List<BacktestTrade> trades = new ArrayList<>();
         int warmup = 40; // candles needed for indicators
+        java.time.LocalDate lastTradeDate = null; // limit to one trade per day per strategy
+        int lastTradeBar = -1;
 
         for (int i = warmup; i < candles.size() - 1; i++) {
+            // Enforce minimum 30-bar (~2.5 hour) gap between trades to avoid overtrading
+            if (lastTradeBar >= 0 && (i - lastTradeBar) < 30) continue;
+
             List<Candle> slice = candles.subList(0, i + 1);
             MarketContext ctx = buildBacktestContext(slice);
             if (ctx == null) continue;
+
+            // ORB-style strategies: only one signal per calendar day
+            java.time.LocalDate candleDate = candles.get(i).getOpenTime()
+                .withZoneSameInstant(IST).toLocalDate();
+            if (strategy.getName().contains("BREAKOUT") && candleDate.equals(lastTradeDate)) continue;
 
             try {
                 var signalOpt = strategy.evaluate(ctx);
                 if (signalOpt.isEmpty()) continue;
                 var signal = signalOpt.get();
+                lastTradeDate = candleDate;
 
                 // Simulate fill at next bar open
                 Candle nextBar = candles.get(i + 1);
@@ -108,7 +119,7 @@ public class BacktestEngine {
                     ? signal.getSuggestedTarget().doubleValue() : entry * 1.3;
 
                 boolean isBull = signal.getDirection().name().contains("CE");
-                double exitPrice = candles.get(Math.min(i + 20, candles.size() - 1))
+                double exitPrice = candles.get(Math.min(i + 40, candles.size() - 1))
                     .getClose().doubleValue();
                 boolean isWin = false;
 
@@ -150,7 +161,7 @@ public class BacktestEngine {
                 BigDecimal netPnl = grossPnl.subtract(cost);
 
                 trades.add(new BacktestTrade(entryBd, exitBd, grossPnl, cost, netPnl, isWin));
-                i += 4; // skip a few bars to avoid overlapping trades
+                lastTradeBar = i;
             } catch (Exception e) {
                 // Strategy evaluation can fail on edge cases — skip and continue
             }
@@ -161,21 +172,57 @@ public class BacktestEngine {
     private MarketContext buildBacktestContext(List<Candle> candles) {
         if (candles.size() < 30) return null;
         String symbol = candles.get(0).getSymbol();
+        Candle latest = candles.get(candles.size() - 1);
+        ZonedDateTime evalAt = latest.getOpenTime();
 
         double[] highs  = candles.stream().mapToDouble(c -> c.getHigh().doubleValue()).toArray();
         double[] lows   = candles.stream().mapToDouble(c -> c.getLow().doubleValue()).toArray();
         double[] closes = candles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
-        long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
 
-        double vwap = IndicatorUtils.vwapLast(highs, lows, closes, vols);
+        // VWAP resets each trading day — use only today's candles
+        java.time.LocalDate today = evalAt.withZoneSameInstant(IST).toLocalDate();
+        List<Candle> todayCandles = candles.stream()
+            .filter(c -> c.getOpenTime().withZoneSameInstant(IST).toLocalDate().equals(today))
+            .toList();
+        double vwap;
+        if (todayCandles.size() > 1) {
+            double[] th = todayCandles.stream().mapToDouble(c -> c.getHigh().doubleValue()).toArray();
+            double[] tl = todayCandles.stream().mapToDouble(c -> c.getLow().doubleValue()).toArray();
+            double[] tc = todayCandles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
+            long[]   tv = todayCandles.stream().mapToLong(Candle::getVolume).toArray();
+            vwap = IndicatorUtils.vwapLast(th, tl, tc, tv);
+        } else {
+            vwap = latest.getClose().doubleValue();
+        }
+
         double atr  = IndicatorUtils.atrLast(highs, lows, closes, 14);
         double adx  = IndicatorUtils.adxLast(highs, lows, closes, 14);
-        BigDecimal lastClose = candles.get(candles.size() - 1).getClose();
 
-        return new MarketContext(symbol,
-            candles.get(candles.size() - 1).getOpenTime(),
-            List.of(), candles, List.of(),
-            lastClose, BigDecimal.valueOf(vwap), atr, adx, adx > 25);
+        // Build synthetic 15m candles by aggregating every 3 consecutive 5m bars
+        List<Candle> candles15m = build15mFromFiveM(candles);
+
+        return new MarketContext(symbol, evalAt,
+            List.of(), candles, candles15m,
+            latest.getClose(), BigDecimal.valueOf(vwap), atr, adx, adx > 20);
+    }
+
+    /** Aggregate 5m candles into 15m candles (every 3 bars → 1 bar). */
+    private List<Candle> build15mFromFiveM(List<Candle> fiveM) {
+        List<Candle> result = new ArrayList<>();
+        for (int i = 0; i + 2 < fiveM.size(); i += 3) {
+            Candle a = fiveM.get(i), b = fiveM.get(i + 1), c = fiveM.get(i + 2);
+            Candle bar = new Candle();
+            bar.setSymbol(a.getSymbol());
+            bar.setTimeframe("15m");
+            bar.setOpenTime(a.getOpenTime());
+            bar.setOpen(a.getOpen());
+            bar.setHigh(a.getHigh().max(b.getHigh()).max(c.getHigh()));
+            bar.setLow(a.getLow().min(b.getLow()).min(c.getLow()));
+            bar.setClose(c.getClose());
+            bar.setVolume(a.getVolume() + b.getVolume() + c.getVolume());
+            result.add(bar);
+        }
+        return result;
     }
 
     private BacktestResult computeResult(String name, List<BacktestTrade> trades,
@@ -183,9 +230,11 @@ public class BacktestEngine {
                                           List<BigDecimal> windowExpectancies) {
         if (trades.isEmpty()) return emptyResult(name, "No trades generated");
 
-        int wins = (int) trades.stream().filter(BacktestTrade::isWin).count();
+        // Use actual P&L sign (not just target-hit flag) for accurate win/loss metrics
+        int wins = (int) trades.stream()
+            .filter(t -> t.netPnl().compareTo(BigDecimal.ZERO) > 0).count();
         int losses = trades.size() - wins;
-        double winRate = trades.isEmpty() ? 0 : (double) wins / trades.size();
+        double winRate = (double) wins / trades.size();
 
         BigDecimal totalGross = trades.stream().map(BacktestTrade::grossPnl)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -194,12 +243,17 @@ public class BacktestEngine {
         BigDecimal totalNet = trades.stream().map(BacktestTrade::netPnl)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal avgWin = trades.stream().filter(BacktestTrade::isWin).map(BacktestTrade::netPnl)
-            .reduce(BigDecimal.ZERO, BigDecimal::add)
-            .divide(BigDecimal.valueOf(Math.max(wins, 1)), 2, RoundingMode.HALF_UP);
-        BigDecimal avgLoss = trades.stream().filter(t -> !t.isWin()).map(BacktestTrade::netPnl)
-            .reduce(BigDecimal.ZERO, BigDecimal::add)
-            .divide(BigDecimal.valueOf(Math.max(losses, 1)), 2, RoundingMode.HALF_UP);
+        BigDecimal grossWins = trades.stream()
+            .filter(t -> t.netPnl().compareTo(BigDecimal.ZERO) > 0)
+            .map(BacktestTrade::netPnl).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal grossLosses = trades.stream()
+            .filter(t -> t.netPnl().compareTo(BigDecimal.ZERO) <= 0)
+            .map(BacktestTrade::netPnl).reduce(BigDecimal.ZERO, BigDecimal::add).abs();
+
+        BigDecimal avgWin = wins == 0 ? BigDecimal.ZERO :
+            grossWins.divide(BigDecimal.valueOf(wins), 2, RoundingMode.HALF_UP);
+        BigDecimal avgLoss = losses == 0 ? BigDecimal.ZERO :
+            grossLosses.divide(BigDecimal.valueOf(losses), 2, RoundingMode.HALF_UP).negate();
 
         BigDecimal expectancy = totalNet.divide(BigDecimal.valueOf(trades.size()), 2, RoundingMode.HALF_UP);
 
@@ -211,11 +265,6 @@ public class BacktestEngine {
             if (dd.compareTo(maxDD) > 0) maxDD = dd;
         }
 
-        // Profit factor: gross wins / gross losses
-        BigDecimal grossWins = trades.stream().filter(BacktestTrade::isWin).map(BacktestTrade::netPnl)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal grossLosses = trades.stream().filter(t -> !t.isWin()).map(BacktestTrade::netPnl)
-            .reduce(BigDecimal.ZERO, BigDecimal::add).abs();
         double profitFactor = grossLosses.compareTo(BigDecimal.ZERO) == 0 ? 999
             : grossWins.divide(grossLosses, 4, RoundingMode.HALF_UP).doubleValue();
 
