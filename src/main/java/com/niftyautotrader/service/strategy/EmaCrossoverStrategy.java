@@ -58,13 +58,13 @@ public class EmaCrossoverStrategy implements TradingStrategy {
         // Bearish crossover: EMA9 just crossed below EMA21
         boolean bearishCross = ema9[prev] >= ema21[prev] && ema9[last] < ema21[last];
 
-        if (bullishCross && rsi >= 45 && rsi <= 70 && lastClose > vwap && ctx.isTrendingMarket()) {
+        if (bullishCross && rsi >= 40 && rsi <= 75 && lastClose > vwap && ctx.adx() > 18) {
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, lastClose,
                 String.format("EMA9(%.2f) crossed above EMA21(%.2f), RSI=%.1f, close(%.2f) > VWAP(%.2f), ADX=%.1f",
                     ema9[last], ema21[last], rsi, lastClose, vwap, ctx.adx())));
         }
 
-        if (bearishCross && rsi >= 30 && rsi <= 55 && lastClose < vwap && ctx.isTrendingMarket()) {
+        if (bearishCross && rsi >= 25 && rsi <= 60 && lastClose < vwap && ctx.adx() > 18) {
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, lastClose,
                 String.format("EMA9(%.2f) crossed below EMA21(%.2f), RSI=%.1f, close(%.2f) < VWAP(%.2f), ADX=%.1f",
                     ema9[last], ema21[last], rsi, lastClose, vwap, ctx.adx())));

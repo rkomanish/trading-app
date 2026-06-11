@@ -75,10 +75,12 @@
         </dependency>
 
         <!-- Kite Connect Java SDK (JitPack: github.com/zerodhatech/javakiteconnect) -->
+        <!-- scope=provided so build doesn't fail when jitpack.io is unreachable -->
         <dependency>
             <groupId>com.github.zerodhatech</groupId>
             <artifactId>javakiteconnect</artifactId>
             <version>v3.5.1</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- Anthropic / HTTP client for LLM advisory -->

@@ -29,7 +29,7 @@ public class BacktestEngine {
     private static final Logger log = LoggerFactory.getLogger(BacktestEngine.class);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final int LOT_SIZE = 75;
-    private static final double SLIPPAGE = 0.005; // 0.5% per side
+    private static final double SLIPPAGE = 0.0002; // 0.02% per side (~5 pts on Nifty at 24k)
 
     private final TradeCostCalculator costCalc;
 
@@ -107,26 +107,44 @@ public class BacktestEngine {
                 double target = signal.getSuggestedTarget() != null
                     ? signal.getSuggestedTarget().doubleValue() : entry * 1.3;
 
-                double exitPrice = entry; // default: flat exit at end of window
+                boolean isBull = signal.getDirection().name().contains("CE");
+                double exitPrice = candles.get(Math.min(i + 20, candles.size() - 1))
+                    .getClose().doubleValue();
                 boolean isWin = false;
 
                 for (int j = i + 1; j < Math.min(i + 20, candles.size()); j++) {
                     Candle bar = candles.get(j);
-                    if (bar.getLow().doubleValue() <= sl) {
-                        exitPrice = sl * (1 - SLIPPAGE);
-                        isWin = false;
-                        break;
-                    }
-                    if (bar.getHigh().doubleValue() >= target) {
-                        exitPrice = target * (1 - SLIPPAGE);
-                        isWin = true;
-                        break;
+                    if (isBull) {
+                        if (bar.getLow().doubleValue() <= sl) {
+                            exitPrice = sl * (1 - SLIPPAGE);
+                            isWin = false;
+                            break;
+                        }
+                        if (bar.getHigh().doubleValue() >= target) {
+                            exitPrice = target * (1 - SLIPPAGE);
+                            isWin = true;
+                            break;
+                        }
+                    } else { // LONG_PE — profit when price falls
+                        if (bar.getHigh().doubleValue() >= sl) {
+                            exitPrice = sl * (1 + SLIPPAGE);
+                            isWin = false;
+                            break;
+                        }
+                        if (bar.getLow().doubleValue() <= target) {
+                            exitPrice = target * (1 + SLIPPAGE);
+                            isWin = true;
+                            break;
+                        }
                     }
                 }
 
                 BigDecimal entryBd = BigDecimal.valueOf(entry).setScale(2, RoundingMode.HALF_UP);
                 BigDecimal exitBd  = BigDecimal.valueOf(exitPrice).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal grossPnl = exitBd.subtract(entryBd)
+                // For CE (long): profit = exit - entry; for PE (short): profit = entry - exit
+                BigDecimal grossPnl = (isBull
+                    ? exitBd.subtract(entryBd)
+                    : entryBd.subtract(exitBd))
                     .multiply(BigDecimal.valueOf(LOT_SIZE));
                 BigDecimal cost = costCalc.calculateRoundTripCost(entryBd, exitBd, LOT_SIZE, SLIPPAGE);
                 BigDecimal netPnl = grossPnl.subtract(cost);
