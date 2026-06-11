@@ -3,160 +3,335 @@
 <head th:replace="~{fragments/layout :: head('Backtest')}"></head>
 <body>
 <nav th:replace="~{fragments/layout :: nav('backtest')}"></nav>
+
+<style>
+  /* ── trade log table ── */
+  .trade-log th  { font-size: 10px; padding: 6px 8px; }
+  .trade-log td  { font-size: 12px; padding: 6px 8px; font-family: monospace; }
+  .win-row  td   { border-left: 2px solid #00ff88; }
+  .loss-row td   { border-left: 2px solid #ff4444; }
+  .exit-target   { color: #00ff88; font-weight: bold; }
+  .exit-sl       { color: #ff4444; font-weight: bold; }
+  .exit-time     { color: #ffcc00; }
+  .pnl-pos       { color: #00ff88; }
+  .pnl-neg       { color: #ff4444; }
+  .dir-ce        { color: #00aaff; }
+  .dir-pe        { color: #ff8844; }
+
+  /* ── daily table ── */
+  .daily-table th { font-size: 10px; padding: 5px 10px; }
+  .daily-table td { font-size: 13px; padding: 5px 10px; }
+
+  /* ── summary bar ── */
+  .stat-bar    { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat-chip   { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px;
+                 padding: 10px 16px; min-width: 120px; }
+  .chip-val    { font-size: 20px; font-weight: bold; color: #fff; }
+  .chip-lbl    { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+
+  /* ── equity bar chart (CSS only) ── */
+  .eq-bar-wrap { display: flex; align-items: flex-end; gap: 2px; height: 60px; margin-top: 8px; }
+  .eq-bar      { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; }
+
+  .section-title { color: #888; font-size: 11px; text-transform: uppercase;
+                   letter-spacing: 1px; margin-bottom: 10px; margin-top: 4px; }
+  .scrollable    { max-height: 420px; overflow-y: auto; }
+</style>
+
 <div class="container">
-    <div class="alert alert-success" th:if="${importMessage}" th:text="${importMessage}"></div>
-    <div class="alert alert-danger" th:if="${importError}" th:text="${importError}"></div>
 
-    <div class="card">
-        <div class="card-title">Fetch From Yahoo Finance</div>
-        <div style="color:#555;font-size:12px;margin-bottom:12px">
-            Pulls real Nifty 50 index candles (^NSEI) from Yahoo. Intraday data limited to ~last 60 days.
-            "Fetch into Database" imports directly; "Download CSV" saves a file in our import format.
+  <div class="alert alert-success" th:if="${importMessage}" th:text="${importMessage}"></div>
+  <div class="alert alert-danger"  th:if="${importError}"   th:text="${importError}"></div>
+
+  <!-- ── Data Import ─────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Fetch From Yahoo Finance</div>
+    <div style="color:#555;font-size:12px;margin-bottom:12px">
+      Pulls real Nifty 50 index candles (^NSEI) from Yahoo. Intraday data limited to ~last 60 days.
+    </div>
+    <form method="post" th:action="@{/backtest/fetch-yahoo}" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+      <div class="form-group" style="margin:0">
+        <label>Interval</label>
+        <select name="interval">
+          <option value="5m" selected>5m</option>
+          <option value="15m">15m</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Range</label>
+        <select name="range">
+          <option value="5d">5 days</option>
+          <option value="1mo" selected>1 month</option>
+          <option value="3mo">3 months (15m only)</option>
+        </select>
+      </div>
+      <input type="hidden" name="yahooSymbol" value="^NSEI"/>
+      <input type="hidden" name="symbol" value="NIFTY"/>
+      <button type="submit" class="btn btn-primary">Fetch into DB</button>
+      <a th:href="@{/backtest/download-yahoo-csv}" class="btn btn-primary" style="text-decoration:none">Download CSV</a>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Import Historical CSV</div>
+    <div style="color:#555;font-size:12px;margin-bottom:12px">
+      Format: <code>timestamp,open,high,low,close,volume</code> (header row, IST timestamps like <code>2024-01-15 09:15:00</code>)
+    </div>
+    <form method="post" th:action="@{/backtest/import-csv}" enctype="multipart/form-data"
+          style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+      <div class="form-group" style="margin:0">
+        <label>CSV File</label>
+        <input type="file" name="file" accept=".csv" required/>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Symbol</label>
+        <input type="text" name="symbol" value="NIFTY" style="width:90px"/>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Timeframe</label>
+        <select name="timeframe">
+          <option value="5m" selected>5m</option>
+          <option value="15m">15m</option>
+          <option value="1m">1m</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Import</button>
+    </form>
+  </div>
+
+  <!-- ── Backtest Runner ──────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Run Backtest</div>
+    <div style="color:#555;font-size:12px;margin-bottom:12px">
+      Fix <strong>From / To dates</strong> to get the same result every time.
+      Leave blank to use all available data.
+    </div>
+    <form method="post" th:action="@{/backtest/run}">
+      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div class="form-group" style="margin:0">
+          <label>Strategy</label>
+          <select name="strategyName">
+            <option th:each="s : ${strategies}" th:value="${s}" th:text="${s}"
+                    th:selected="${s == selectedStrategy}"></option>
+          </select>
         </div>
-        <form method="post" th:action="@{/backtest/fetch-yahoo}" style="display:inline">
-            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-            <div class="grid-3">
-                <div class="form-group">
-                    <label>Yahoo Symbol</label>
-                    <input type="text" name="yahooSymbol" value="^NSEI"/>
-                </div>
-                <div class="form-group">
-                    <label>Interval</label>
-                    <select name="interval">
-                        <option value="5m" selected>5m</option>
-                        <option value="15m">15m</option>
-                        <option value="1m">1m (last 7 days only)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Range</label>
-                    <select name="range">
-                        <option value="1mo" selected>1 month</option>
-                        <option value="5d">5 days</option>
-                        <option value="3mo">3 months (15m+ only)</option>
-                    </select>
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary">Fetch into Database</button>
-            <a th:href="@{/backtest/download-yahoo-csv(yahooSymbol='^NSEI',interval='5m',range='1mo')}"
-               class="btn btn-primary" style="text-decoration:none;display:inline-block;margin-left:8px">
-                Download CSV (5m, 1 month)</a>
-        </form>
+        <div class="form-group" style="margin:0">
+          <label>Symbol</label>
+          <input type="text" name="symbol" th:value="${symbol ?: 'NIFTY'}" style="width:90px"/>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>From Date</label>
+          <input type="date" name="fromDate"
+                 th:value="${fromDate ?: defaultFromDate}" style="width:140px"/>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>To Date</label>
+          <input type="date" name="toDate"
+                 th:value="${toDate ?: defaultToDate}" style="width:140px"/>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Walk-Forward Windows</label>
+          <select name="windows">
+            <option value="2">2 windows</option>
+            <option value="4" selected>4 windows</option>
+            <option value="6">6 windows</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Run Backtest</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="alert alert-danger" th:if="${error}" th:text="${error}"></div>
+
+  <!-- ── Results ─────────────────────────────────────── -->
+  <div th:if="${result != null}">
+
+    <!-- verdict banner -->
+    <div th:class="${result.promotable()} ? 'alert alert-success' : 'alert alert-danger'"
+         th:text="${result.verdict()}"></div>
+
+    <!-- data range info -->
+    <div style="color:#555;font-size:12px;margin-bottom:16px;background:#0d0d0d;padding:10px 14px;border-radius:4px;border:1px solid #1a1a1a">
+      &#128197;
+      Data: <strong style="color:#888" th:text="${result.dataFrom()} + ' → ' + ${result.dataTo()}">—</strong>
+      &nbsp;|&nbsp;
+      <strong style="color:#888" th:text="${result.tradingDaysWithData()}">0</strong> trading days with candle data
+      &nbsp;|&nbsp;
+      <strong style="color:#888" th:text="${result.totalTrades()}">0</strong> total trades
+      &nbsp;|&nbsp;
+      Avg <strong style="color:#888"
+          th:text="${result.tradingDaysWithData() > 0 ?
+            #numbers.formatDecimal(result.totalTrades() * 1.0 / result.tradingDaysWithData(), 1, 1) : '—'}">0</strong>
+      trades/day
     </div>
 
-    <div class="card">
-        <div class="card-title">Import Historical Candles (CSV)</div>
-        <div style="color:#555;font-size:12px;margin-bottom:12px">
-            Format: <code>timestamp,open,high,low,close,volume</code> with header row.
-            Timestamps in IST, e.g. <code>2024-01-15 09:15:00</code>. Duplicates are skipped automatically.
+    <!-- ── Summary stat chips ── -->
+    <div class="stat-bar">
+      <div class="stat-chip">
+        <div class="chip-val" th:text="${result.totalTrades()}">0</div>
+        <div class="chip-lbl">Total Trades</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val"
+             th:classappend="${result.winRate() > 0.5} ? ' green' : ' red'"
+             th:text="${#numbers.formatDecimal(result.winRate() * 100, 1, 1)} + '%'">0%</div>
+        <div class="chip-lbl" th:text="${result.winningTrades()} + 'W / ' + ${result.losingTrades()} + 'L'">0W/0L</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val"
+             th:classappend="${result.totalNetPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' green' : ' red'"
+             th:text="'₹' + ${#numbers.formatDecimal(result.totalNetPnl(), 1, 0)}">₹0</div>
+        <div class="chip-lbl">Net P&amp;L</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val"
+             th:classappend="${result.profitFactor() > 1} ? ' green' : ' red'"
+             th:text="${#numbers.formatDecimal(result.profitFactor(), 1, 2)}">0</div>
+        <div class="chip-lbl">Profit Factor</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val"
+             th:classappend="${result.expectancyPerTrade().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' green' : ' red'"
+             th:text="'₹' + ${#numbers.formatDecimal(result.expectancyPerTrade(), 1, 0)}">₹0</div>
+        <div class="chip-lbl">Expectancy/Trade</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val red"
+             th:text="'₹' + ${#numbers.formatDecimal(result.maxDrawdown(), 1, 0)}">₹0</div>
+        <div class="chip-lbl">Max Drawdown</div>
+      </div>
+      <div class="stat-chip">
+        <div>
+          <span class="green" th:text="'₹' + ${#numbers.formatDecimal(result.avgWin(), 1, 0)}">₹0</span>
+          <span style="color:#444"> / </span>
+          <span class="red" th:text="'₹' + ${#numbers.formatDecimal(result.avgLoss(), 1, 0)}">₹0</span>
         </div>
-        <form method="post" th:action="@{/backtest/import-csv}" enctype="multipart/form-data">
-            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-            <div class="grid-3">
-                <div class="form-group">
-                    <label>CSV File</label>
-                    <input type="file" name="file" accept=".csv" required/>
-                </div>
-                <div class="form-group">
-                    <label>Symbol</label>
-                    <input type="text" name="symbol" value="NIFTY"/>
-                </div>
-                <div class="form-group">
-                    <label>Timeframe</label>
-                    <select name="timeframe">
-                        <option value="5m" selected>5m</option>
-                        <option value="1m">1m</option>
-                        <option value="15m">15m</option>
-                    </select>
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary">Import CSV</button>
-        </form>
+        <div class="chip-lbl">Avg Win / Avg Loss</div>
+      </div>
+      <div class="stat-chip">
+        <div class="chip-val red"
+             th:text="'₹' + ${#numbers.formatDecimal(result.totalCosts(), 1, 0)}">₹0</div>
+        <div class="chip-lbl">Total Costs Paid</div>
+      </div>
     </div>
 
-    <div class="card">
-        <div class="card-title">Walk-Forward Backtest Runner</div>
-        <form method="post" th:action="@{/backtest/run}">
-            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-            <div class="grid-3">
-                <div class="form-group">
-                    <label>Strategy</label>
-                    <select name="strategyName">
-                        <option th:each="s : ${strategies}" th:value="${s}"
-                                th:text="${s}"
-                                th:selected="${s == selectedStrategy}"></option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Symbol</label>
-                    <input type="text" name="symbol" th:value="${symbol ?: 'NIFTY'}"/>
-                </div>
-                <div class="form-group">
-                    <label>Walk-Forward Windows</label>
-                    <select name="windows">
-                        <option value="2">2 windows</option>
-                        <option value="4" selected>4 windows</option>
-                        <option value="6">6 windows</option>
-                    </select>
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary">Run Backtest</button>
-        </form>
+    <!-- ── Two-column: Daily P&L + Trade Log ── -->
+    <div class="grid-2">
+
+      <!-- Daily P&L -->
+      <div class="card">
+        <div class="section-title">Daily P&amp;L Breakdown</div>
+        <div class="scrollable">
+          <table class="daily-table" style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Day</th>
+                <th style="text-align:right">Net P&amp;L</th>
+                <th style="text-align:right">Running Total</th>
+              </tr>
+            </thead>
+            <tbody th:if="${!result.dailyPnl().isEmpty()}">
+              <tr th:each="entry, stat : ${result.dailyPnl().entrySet()}"
+                  th:with="isPos=${entry.value.compareTo(T(java.math.BigDecimal).ZERO) >= 0}">
+                <td th:text="${entry.key}">2024-01-01</td>
+                <td style="color:#555" th:text="${entry.key.dayOfWeek.toString().substring(0,3)}">MON</td>
+                <td style="text-align:right"
+                    th:classappend="${isPos} ? ' pnl-pos' : ' pnl-neg'"
+                    th:text="(${isPos} ? '+' : '') + '₹' + ${#numbers.formatDecimal(entry.value, 1, 0)}">₹0</td>
+                <td style="text-align:right; color:#666; font-size:11px">—</td>
+              </tr>
+            </tbody>
+            <tbody th:if="${result.dailyPnl().isEmpty()}">
+              <tr><td colspan="4" style="color:#444;text-align:center;padding:20px">No trades in selected period</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Trade-by-trade log -->
+      <div class="card">
+        <div class="section-title">
+          Trade Log
+          <span style="color:#444;font-weight:normal"> — each simulated trade in chronological order</span>
+        </div>
+        <div class="scrollable">
+          <table class="trade-log" style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Dir</th>
+                <th>Entry</th>
+                <th>SL</th>
+                <th>Target</th>
+                <th>Exit</th>
+                <th>Exit Why</th>
+                <th style="text-align:right">Gross</th>
+                <th style="text-align:right">Cost</th>
+                <th style="text-align:right">Net P&amp;L</th>
+                <th style="text-align:right">Running</th>
+              </tr>
+            </thead>
+            <tbody th:if="${!result.trades().isEmpty()}">
+              <tr th:each="t : ${result.trades()}"
+                  th:classappend="${t.win()} ? 'win-row' : 'loss-row'">
+                <td style="color:#444" th:text="${t.tradeNumber()}">1</td>
+                <td th:text="${t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')).toLocalDate()}">2024-01-01</td>
+                <td style="color:#555"
+                    th:text="${#temporals.format(t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')), 'HH:mm')}">09:30</td>
+                <td>
+                  <span class="dir-ce" th:if="${t.direction().contains('CE')}">CE&#8679;</span>
+                  <span class="dir-pe" th:if="${t.direction().contains('PE')}">PE&#8681;</span>
+                </td>
+                <td th:text="${t.entryPrice()}">0</td>
+                <td style="color:#ff6666" th:text="${t.stopLoss()}">0</td>
+                <td style="color:#66ff66" th:text="${t.target()}">0</td>
+                <td th:text="${t.exitPrice()}">0</td>
+                <td>
+                  <span class="exit-target" th:if="${t.exitReason() == 'TARGET'}">&#10003; TGT</span>
+                  <span class="exit-sl"     th:if="${t.exitReason() == 'STOP_LOSS'}">&#10007; SL</span>
+                  <span class="exit-time"   th:if="${t.exitReason() == 'TIME_EXIT'}">&#9201; TIME</span>
+                </td>
+                <td style="text-align:right"
+                    th:classappend="${t.grossPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
+                    th:text="'₹' + ${#numbers.formatDecimal(t.grossPnl(), 1, 0)}">₹0</td>
+                <td style="text-align:right;color:#555"
+                    th:text="'₹' + ${#numbers.formatDecimal(t.costs(), 1, 0)}">₹0</td>
+                <td style="text-align:right;font-weight:bold"
+                    th:classappend="${t.netPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
+                    th:text="'₹' + ${#numbers.formatDecimal(t.netPnl(), 1, 0)}">₹0</td>
+                <td style="text-align:right;font-size:11px;color:#666"
+                    th:classappend="${t.runningPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
+                    th:text="'₹' + ${#numbers.formatDecimal(t.runningPnl(), 1, 0)}">₹0</td>
+              </tr>
+            </tbody>
+            <tbody th:if="${result.trades().isEmpty()}">
+              <tr><td colspan="13" style="color:#444;text-align:center;padding:20px">No trades generated</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end grid-2 -->
+
+    <!-- ── Legend ── -->
+    <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:12px 16px;font-size:12px;color:#555;display:flex;gap:24px;flex-wrap:wrap">
+      <span><span class="exit-target">&#10003; TGT</span> = Price hit your target first — full win</span>
+      <span><span class="exit-sl">&#10007; SL</span> = Price hit stop-loss first — full loss</span>
+      <span><span class="exit-time">&#9201; TIME</span> = Neither hit within 40 bars → exited at bar-40 close</span>
+      <span><span class="dir-ce">CE&#8679;</span> = Bullish signal (Call Option)</span>
+      <span><span class="dir-pe">PE&#8681;</span> = Bearish signal (Put Option)</span>
+      <span>Lot size = 75 units &nbsp;|&nbsp; Slippage = 0.02% per side</span>
     </div>
 
-    <div class="alert alert-danger" th:if="${error}" th:text="${error}"></div>
+  </div><!-- end result block -->
 
-    <div th:if="${result != null}">
-        <div th:class="${result.promotable} ? 'alert alert-success' : 'alert alert-danger'"
-             th:text="${result.verdict}"></div>
-
-        <div class="grid-4">
-            <div class="card">
-                <div class="card-title">Total Trades</div>
-                <div class="stat-value" th:text="${result.totalTrades}">0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Win Rate</div>
-                <div class="stat-value" th:class="${result.winRate > 0.5} ? 'stat-value green' : 'stat-value red'"
-                     th:text="${#numbers.formatDecimal(result.winRate * 100, 1, 1)} + '%'">0%</div>
-                <div class="stat-label" th:text="${result.winningTrades} + ' W / ' + ${result.losingTrades} + ' L'"></div>
-            </div>
-            <div class="card">
-                <div class="card-title">Net P&amp;L (after costs)</div>
-                <div class="stat-value"
-                     th:class="${result.totalNetPnl >= 0} ? 'stat-value green' : 'stat-value red'"
-                     th:text="'₹' + ${#numbers.formatDecimal(result.totalNetPnl, 1, 2)}">₹0</div>
-                <div class="stat-label" th:text="'Costs: ₹' + ${#numbers.formatDecimal(result.totalCosts, 1, 2)}"></div>
-            </div>
-            <div class="card">
-                <div class="card-title">Profit Factor</div>
-                <div class="stat-value"
-                     th:class="${result.profitFactor > 1} ? 'stat-value green' : 'stat-value red'"
-                     th:text="${#numbers.formatDecimal(result.profitFactor, 1, 2)}">0</div>
-            </div>
-        </div>
-        <div class="grid-3">
-            <div class="card">
-                <div class="card-title">Expectancy / Trade</div>
-                <div class="stat-value"
-                     th:class="${result.expectancyPerTrade >= 0} ? 'stat-value green' : 'stat-value red'"
-                     th:text="'₹' + ${#numbers.formatDecimal(result.expectancyPerTrade, 1, 2)}">₹0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Max Drawdown</div>
-                <div class="stat-value red"
-                     th:text="'₹' + ${#numbers.formatDecimal(result.maxDrawdown, 1, 2)}">₹0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Avg Win / Avg Loss</div>
-                <div>
-                    <span class="green" th:text="'₹' + ${#numbers.formatDecimal(result.avgWin, 1, 2)}">₹0</span>
-                    <span style="color:#666"> / </span>
-                    <span class="red" th:text="'₹' + ${#numbers.formatDecimal(result.avgLoss, 1, 2)}">₹0</span>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 </body>
 </html>

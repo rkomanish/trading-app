@@ -135,6 +135,7 @@ public class StrategyMarketplaceService {
         return new BacktestResult(name, 0, 0, 0, 0,
             BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
             BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0,
-            List.of(BigDecimal.ZERO), false, "NOT PROMOTABLE — no data");
+            List.of(BigDecimal.ZERO), false, "NOT PROMOTABLE — no data",
+            List.of(), Map.of(), null, null, 0);
     }
 }

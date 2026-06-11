@@ -1,7 +1,9 @@
 package com.niftyautotrader.service.backtest;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 public record BacktestResult(
     String strategyName,
@@ -18,6 +20,17 @@ public record BacktestResult(
     BigDecimal maxDrawdown,
     double profitFactor,
     List<BigDecimal> equityCurve,
-    boolean promotable,    // positive expectancy after costs across walk-forward windows
-    String verdict         // human-readable promotion verdict
+    boolean promotable,
+    String verdict,
+
+    // ── Per-trade detail log ────────────────────────────────
+    List<TradeDetail> trades,
+
+    // ── Daily summary (date → net P&L that day) ─────────────
+    Map<LocalDate, BigDecimal> dailyPnl,
+
+    // ── Date range of the data used ─────────────────────────
+    LocalDate dataFrom,
+    LocalDate dataTo,
+    int tradingDaysWithData
 ) {}

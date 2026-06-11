@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -49,7 +50,6 @@ public class BacktestController {
             .collect(Collectors.toMap(TradingStrategy::getName, s -> s));
     }
 
-    /** Fetch last month of candles from Yahoo Finance straight into the DB. */
     @PostMapping("/fetch-yahoo")
     public String fetchYahoo(@RequestParam(defaultValue = "^NSEI") String yahooSymbol,
                               @RequestParam(defaultValue = "NIFTY") String symbol,
@@ -67,7 +67,6 @@ public class BacktestController {
         return "redirect:/backtest";
     }
 
-    /** Download last month of Yahoo candles as a CSV file in our import format. */
     @GetMapping("/download-yahoo-csv")
     public ResponseEntity<String> downloadYahooCsv(
             @RequestParam(defaultValue = "^NSEI") String yahooSymbol,
@@ -117,6 +116,9 @@ public class BacktestController {
                                Model model) {
         model.addAttribute("strategies", strategiesByName.keySet());
         model.addAttribute("symbol", "NIFTY");
+        // Default date range: last 30 days
+        model.addAttribute("defaultFromDate", LocalDate.now(IST).minusDays(30).toString());
+        model.addAttribute("defaultToDate",   LocalDate.now(IST).toString());
         if (strategyName != null) {
             model.addAttribute("selectedStrategy", strategyName);
         }
@@ -127,6 +129,8 @@ public class BacktestController {
     public String runBacktest(@RequestParam String strategyName,
                                @RequestParam(defaultValue = "NIFTY") String symbol,
                                @RequestParam(defaultValue = "4") int windows,
+                               @RequestParam(required = false) String fromDate,
+                               @RequestParam(required = false) String toDate,
                                Model model) {
         TradingStrategy strategy = strategiesByName.get(strategyName);
         if (strategy == null) {
@@ -135,9 +139,21 @@ public class BacktestController {
             return "backtest";
         }
 
-        ZonedDateTime cutoff = ZonedDateTime.now(IST).minusYears(10);
-        var candles = candleRepo.findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(
-            symbol, "5m", cutoff);
+        // Use explicit date range when provided — gives reproducible results
+        ZonedDateTime from, to;
+        if (fromDate != null && !fromDate.isBlank()) {
+            from = LocalDate.parse(fromDate).atStartOfDay(IST);
+        } else {
+            from = ZonedDateTime.now(IST).minusYears(10);
+        }
+        if (toDate != null && !toDate.isBlank()) {
+            to = LocalDate.parse(toDate).plusDays(1).atStartOfDay(IST); // inclusive
+        } else {
+            to = ZonedDateTime.now(IST).plusDays(1);
+        }
+
+        var candles = candleRepo.findBySymbolAndTimeframeAndOpenTimeBetweenOrderByOpenTimeAsc(
+            symbol, "5m", from, to);
 
         BacktestResult result = backtestEngine.runWalkForward(strategy, candles, windows);
 
@@ -145,6 +161,10 @@ public class BacktestController {
         model.addAttribute("strategies", strategiesByName.keySet());
         model.addAttribute("selectedStrategy", strategyName);
         model.addAttribute("symbol", symbol);
+        model.addAttribute("fromDate", fromDate);
+        model.addAttribute("toDate", toDate);
+        model.addAttribute("defaultFromDate", LocalDate.now(IST).minusDays(30).toString());
+        model.addAttribute("defaultToDate",   LocalDate.now(IST).toString());
         return "backtest";
     }
 }
