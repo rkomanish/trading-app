@@ -5,7 +5,6 @@ import com.niftyautotrader.repository.CandleRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
@@ -55,7 +54,6 @@ public class CandleCsvImporter {
 
     public record ImportResult(int imported, int skipped, int duplicates, List<String> errors) {}
 
-    @Transactional
     public ImportResult importCsv(MultipartFile file, String symbol, String timeframe) {
         int imported = 0, skipped = 0, duplicates = 0;
         List<String> errors = new ArrayList<>();
@@ -137,15 +135,15 @@ public class CandleCsvImporter {
         throw new IllegalArgumentException("Unparseable timestamp: " + raw);
     }
 
-    /** Save individually so one duplicate doesn't roll back the batch. Returns [saved, duplicates]. */
     private int[] saveBatch(List<Candle> batch) {
         int saved = 0, dup = 0;
         for (Candle c : batch) {
-            try {
+            if (candleRepo.existsBySymbolAndTimeframeAndOpenTime(
+                    c.getSymbol(), c.getTimeframe(), c.getOpenTime())) {
+                dup++;
+            } else {
                 candleRepo.save(c);
                 saved++;
-            } catch (Exception e) {
-                dup++; // unique constraint violation = duplicate candle
             }
         }
         return new int[]{saved, dup};
