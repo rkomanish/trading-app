@@ -8,6 +8,7 @@ import com.niftyautotrader.repository.SignalRepository;
 import com.niftyautotrader.service.execution.OrderExecutionService;
 import com.niftyautotrader.service.indicators.IndicatorUtils;
 import com.niftyautotrader.service.sentiment.SentimentVetoService;
+import com.niftyautotrader.service.strategy.StrategySelector.MarketRegime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,19 +37,25 @@ public class StrategyEngine {
     private final SentimentVetoService sentimentVeto;
     private final OrderExecutionService executionService;
     private final Broker broker;
+    private final StrategySelector strategySelector;
+
+    private volatile MarketRegime lastRegime = MarketRegime.RANGING;
+    private volatile String lastActiveStrategies = "";
 
     public StrategyEngine(List<TradingStrategy> strategies,
                           CandleRepository candleRepo,
                           SignalRepository signalRepo,
                           SentimentVetoService sentimentVeto,
                           OrderExecutionService executionService,
-                          Broker broker) {
+                          Broker broker,
+                          StrategySelector strategySelector) {
         this.strategies = strategies;
         this.candleRepo = candleRepo;
         this.signalRepo = signalRepo;
         this.sentimentVeto = sentimentVeto;
         this.executionService = executionService;
         this.broker = broker;
+        this.strategySelector = strategySelector;
         log.info("StrategyEngine loaded {} strategies: {}",
             strategies.size(),
             strategies.stream().map(TradingStrategy::getName).toList());
@@ -60,8 +67,13 @@ public class StrategyEngine {
         MarketContext ctx = buildContext(NIFTY);
         if (ctx == null) return;
 
-        for (TradingStrategy strategy : strategies) {
-            if (!strategy.isEnabled()) continue;
+        // Select only the strategies appropriate for the current market regime
+        lastRegime = strategySelector.detectRegime(ctx);
+        List<TradingStrategy> active = strategySelector.selectForRegime(strategies, lastRegime, ctx);
+        lastActiveStrategies = active.stream().map(TradingStrategy::getName)
+            .collect(java.util.stream.Collectors.joining(", "));
+
+        for (TradingStrategy strategy : active) {
             try {
                 Optional<Signal> signalOpt = strategy.evaluate(ctx);
                 signalOpt.ifPresent(signal -> processSignal(signal, ctx));
@@ -70,6 +82,9 @@ public class StrategyEngine {
             }
         }
     }
+
+    public MarketRegime getLastRegime() { return lastRegime; }
+    public String getLastActiveStrategies() { return lastActiveStrategies; }
 
     private void processSignal(Signal signal, MarketContext ctx) {
         signalRepo.save(signal);

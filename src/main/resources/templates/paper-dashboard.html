@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Paper Trading')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: nav('paper')}"></nav>
+<div class="container">
+
+    <!-- Status banner -->
+    <div th:if="${isPaper}" class="alert alert-warning" style="font-size:13px">
+        🟡 <strong>PAPER TRADING MODE</strong> — No real money involved. All orders are simulated.
+        Broker: <strong th:text="${brokerName}">PaperBroker</strong>
+    </div>
+    <div th:unless="${isPaper}" class="alert alert-danger">
+        🔴 <strong>LIVE TRADING ACTIVE</strong> — Real orders are being placed.
+    </div>
+
+    <!-- Market Regime -->
+    <div class="grid-3">
+        <div class="card">
+            <div class="card-title">Current Market Regime</div>
+            <div class="stat-value" th:text="${currentRegime}" style="font-size:20px">RANGING</div>
+            <div class="stat-label">Determines which strategies run</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Active Strategies</div>
+            <div style="font-size:12px;color:#ccc;line-height:1.6" th:text="${activeStrategies ?: 'None yet (market closed)'}">-</div>
+            <div class="stat-label">Auto-selected for regime</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Regime → Strategy Guide</div>
+            <div style="font-size:11px;color:#aaa;line-height:1.8">
+                OPENING → ORB<br>
+                STRONG_TREND → Supertrend, EMA Pullback<br>
+                MODERATE_TREND → MACD, EMA Crossover<br>
+                RANGING → VWAP Bollinger, BB Squeeze
+            </div>
+        </div>
+    </div>
+
+    <!-- P&L Summary -->
+    <div class="grid-4">
+        <div class="card">
+            <div class="card-title">Realized P&amp;L (Today)</div>
+            <div class="stat-value"
+                 th:class="${realizedPnl != null and realizedPnl >= 0} ? 'stat-value green' : 'stat-value red'"
+                 th:text="'₹' + ${#numbers.formatDecimal(realizedPnl ?: 0, 1, 2)}">₹0</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Unrealized P&amp;L</div>
+            <div class="stat-value"
+                 th:class="${unrealizedPnl != null and unrealizedPnl >= 0} ? 'stat-value green' : 'stat-value red'"
+                 th:text="'₹' + ${#numbers.formatDecimal(unrealizedPnl ?: 0, 1, 2)}">₹0</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Total P&amp;L</div>
+            <div class="stat-value"
+                 th:with="total=${(realizedPnl ?: 0) + (unrealizedPnl ?: 0)}"
+                 th:class="${total >= 0} ? 'stat-value green' : 'stat-value red'"
+                 th:text="'₹' + ${#numbers.formatDecimal((realizedPnl ?: 0) + (unrealizedPnl ?: 0), 1, 2)}">₹0</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Paper Trades Executed</div>
+            <div class="stat-value" th:text="${totalPaperTrades ?: 0}">0</div>
+        </div>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="card">
+        <div class="card-title">Open Positions</div>
+        <div th:if="${!hasPositions}" style="color:#888;font-size:13px;padding:12px 0">
+            No open positions. Strategy engine will enter when market opens and conditions align.
+        </div>
+        <table th:if="${hasPositions}" style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+                <tr style="color:#888;border-bottom:1px solid #333">
+                    <th style="text-align:left;padding:8px">Symbol</th>
+                    <th style="text-align:right;padding:8px">Qty</th>
+                    <th style="text-align:right;padding:8px">Entry</th>
+                    <th style="text-align:right;padding:8px">Current</th>
+                    <th style="text-align:right;padding:8px">Unrealized P&amp;L</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="pos : ${positions}" style="border-bottom:1px solid #222">
+                    <td style="padding:8px;color:#ddd" th:text="${pos.key}">NIFTY</td>
+                    <td style="padding:8px;text-align:right" th:text="${pos.value}">75</td>
+                    <td style="padding:8px;text-align:right"
+                        th:text="'₹' + ${#numbers.formatDecimal(entryPrices?.get(pos.key) ?: 0, 1, 2)}">₹0</td>
+                    <td style="padding:8px;text-align:right"
+                        th:text="'₹' + ${#numbers.formatDecimal(prices?.get(pos.key) ?: 0, 1, 2)}">₹0</td>
+                    <td style="padding:8px;text-align:right"
+                        th:with="ep=${entryPrices?.get(pos.key) ?: 0}, cp=${prices?.get(pos.key) ?: 0}"
+                        th:class="${(cp - ep) * pos.value >= 0} ? 'green' : 'red'"
+                        th:text="'₹' + ${#numbers.formatDecimal((cp - ep) * pos.value, 1, 2)}">₹0</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Today's Signals -->
+    <div class="card">
+        <div class="card-title">Today's Signals</div>
+        <div th:if="${todaySignals.isEmpty()}" style="color:#888;font-size:13px;padding:12px 0">
+            No signals generated today yet. Market must be open (Mon–Fri, 09:15–15:30 IST) and
+            data must be flowing in via the scheduled candle fetcher.
+        </div>
+        <table th:unless="${todaySignals.isEmpty()}" style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead>
+                <tr style="color:#888;border-bottom:1px solid #333">
+                    <th style="text-align:left;padding:6px">Time</th>
+                    <th style="text-align:left;padding:6px">Strategy</th>
+                    <th style="text-align:left;padding:6px">Direction</th>
+                    <th style="text-align:right;padding:6px">Entry</th>
+                    <th style="text-align:right;padding:6px">SL</th>
+                    <th style="text-align:right;padding:6px">Target</th>
+                    <th style="text-align:left;padding:6px">Status</th>
+                    <th style="text-align:left;padding:6px">Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="sig : ${todaySignals}" style="border-bottom:1px solid #1a1a1a">
+                    <td style="padding:6px;color:#aaa"
+                        th:text="${#temporals.format(sig.generatedAt.withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')), 'HH:mm:ss')}">09:30</td>
+                    <td style="padding:6px;color:#7bf" th:text="${sig.strategyName}">-</td>
+                    <td style="padding:6px"
+                        th:class="${sig.direction.name().contains('CE')} ? 'green' : 'red'"
+                        th:text="${sig.direction}">-</td>
+                    <td style="padding:6px;text-align:right"
+                        th:text="${sig.suggestedEntry != null ? '₹' + #numbers.formatDecimal(sig.suggestedEntry, 1, 2) : '-'}">-</td>
+                    <td style="padding:6px;text-align:right;color:#f88"
+                        th:text="${sig.suggestedStopLoss != null ? '₹' + #numbers.formatDecimal(sig.suggestedStopLoss, 1, 2) : '-'}">-</td>
+                    <td style="padding:6px;text-align:right;color:#8f8"
+                        th:text="${sig.suggestedTarget != null ? '₹' + #numbers.formatDecimal(sig.suggestedTarget, 1, 2) : '-'}">-</td>
+                    <td style="padding:6px;font-size:11px"
+                        th:text="${sig.vetoedBySentiment ? '🚫 Vetoed' : sig.riskApproved ? '✅ Approved' : '⏳ Pending'}">-</td>
+                    <td style="padding:6px;color:#777;font-size:11px;max-width:200px;overflow:hidden"
+                        th:text="${sig.reasoning}">-</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- How it works section -->
+    <div class="card">
+        <div class="card-title">How Paper Trading Works</div>
+        <div style="font-size:13px;color:#bbb;line-height:1.8">
+            <strong style="color:#ddd">1. Market opens (09:15 IST)</strong> — StrategyEngine fires every minute.<br>
+            <strong style="color:#ddd">2. Regime detection</strong> — ADX level determines which strategies are active.<br>
+            <strong style="color:#ddd">3. Signal generated</strong> — Strategy sees a valid setup, creates a signal.<br>
+            <strong style="color:#ddd">4. Sentiment veto</strong> — Claude checks RSS news headlines. If strongly bearish/bullish against the trade, it vetoes.<br>
+            <strong style="color:#ddd">5. Risk check</strong> — RiskEngine validates: max daily loss, max lots, entry window, kill switch.<br>
+            <strong style="color:#ddd">6. Paper fill</strong> — PaperBroker simulates fill at last DB candle price ± 0.02% slippage.<br>
+            <strong style="color:#ddd">7. Square-off</strong> — All positions automatically closed at 15:15 IST.<br>
+            <br>
+            <strong style="color:#ff8">To start paper trading:</strong> Make sure the app is running during market hours.
+            The strategy engine runs on a cron schedule and will generate signals automatically.
+            You can monitor everything on this page.
+        </div>
+    </div>
+
+</div>
+</body>
+</html>
