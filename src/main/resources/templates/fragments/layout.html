@@ -57,6 +57,7 @@
     <a th:href="@{/trades}" th:classappend="${current == 'trades'} ? 'active'">Trades</a>
     <a th:href="@{/backtest}" th:classappend="${current == 'backtest'} ? 'active'">Backtest</a>
     <a th:href="@{/paper}" th:classappend="${current == 'paper'} ? 'active'" style="color:#ffcc00">Paper Trading</a>
+    <a th:href="@{/strategies}" th:classappend="${current == 'strategies'} ? 'active'" style="color:#88aaff">Strategies</a>
     <a th:href="@{/sentiment}" th:classappend="${current == 'sentiment'} ? 'active'">Sentiment</a>
     <a th:href="@{/config}" th:classappend="${current == 'config'} ? 'active'">Config</a>
     <span th:fragment="mode-badge" th:classappend="${liveMode} ? 'mode-live' : 'mode-paper'" class="mode-badge"

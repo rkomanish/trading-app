@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('Strategy Marketplace')}"></head>
+<body>
+
+<nav th:replace="~{fragments/layout :: nav('strategies')}"></nav>
+
+<style>
+  .mkt-layout   { display: flex; gap: 20px; max-width: 1300px; margin: 0 auto; padding: 20px; }
+  .sidebar      { width: 220px; flex-shrink: 0; }
+  .main-panel   { flex: 1; min-width: 0; }
+
+  /* sidebar filter */
+  .filter-card  { background: #111; border: 1px solid #222; border-radius: 6px; padding: 14px; margin-bottom: 14px; }
+  .filter-title { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+  .filter-btn   { display: block; width: 100%; text-align: left; background: none; border: none;
+                  color: #aaa; padding: 7px 10px; border-radius: 4px; cursor: pointer;
+                  font-family: inherit; font-size: 13px; margin-bottom: 4px; }
+  .filter-btn:hover  { background: #1a1a1a; color: #fff; }
+  .filter-btn.active { background: #003300; color: #00ff88; border-left: 2px solid #00ff88; }
+
+  /* page header */
+  .page-header  { margin-bottom: 20px; }
+  .page-title   { font-size: 22px; color: #fff; margin-bottom: 6px; }
+  .page-sub     { color: #666; font-size: 13px; }
+  .tag          { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+                  background: #1a1a1a; color: #888; border: 1px solid #333; margin-left: 8px; }
+
+  /* strategy card */
+  .strat-card   { background: #111; border: 1px solid #222; border-radius: 8px;
+                  padding: 18px 20px; margin-bottom: 14px; transition: border-color 0.2s; }
+  .strat-card:hover { border-color: #333; }
+
+  .strat-top    { display: flex; align-items: flex-start; gap: 16px; }
+  .strat-icon   { width: 44px; height: 44px; border-radius: 8px; background: #1a2a1a;
+                  display: flex; align-items: center; justify-content: center;
+                  font-size: 20px; flex-shrink: 0; }
+  .strat-icon.mean-rev  { background: #1a1a2a; }
+  .strat-icon.breakout  { background: #2a1a1a; }
+
+  .strat-info   { flex: 1; min-width: 0; }
+  .strat-name   { font-size: 16px; color: #fff; font-weight: bold; margin-bottom: 4px; }
+  .strat-meta   { font-size: 12px; color: #666; display: flex; gap: 12px; flex-wrap: wrap; }
+  .strat-meta span { display: flex; align-items: center; gap: 4px; }
+
+  .badge-type   { padding: 2px 8px; border-radius: 10px; font-size: 11px; border: 1px solid; }
+  .badge-trend  { background: #0a1a0a; color: #00cc66; border-color: #00cc66; }
+  .badge-mr     { background: #0a0a1a; color: #6688ff; border-color: #6688ff; }
+  .badge-bo     { background: #1a0a0a; color: #ff8844; border-color: #ff8844; }
+  .badge-promo  { background: #0a1a0a; color: #00ff88; border-color: #00ff88; }
+  .badge-fail   { background: #1a0a0a; color: #ff4444; border-color: #ff4444; }
+
+  .returns-row  { display: flex; gap: 0; margin-top: 16px; border-top: 1px solid #1a1a1a;
+                  padding-top: 14px; align-items: center; }
+  .ret-cell     { flex: 1; text-align: center; border-right: 1px solid #1a1a1a; }
+  .ret-cell:last-child { border-right: none; }
+  .ret-label    { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .ret-val      { font-size: 20px; font-weight: bold; }
+  .ret-val.pos  { color: #00ff88; }
+  .ret-val.neg  { color: #ff4444; }
+  .ret-val.na   { color: #444; font-size: 14px; }
+
+  .strat-footer { display: flex; align-items: center; justify-content: space-between;
+                  margin-top: 14px; padding-top: 12px; border-top: 1px solid #1a1a1a;
+                  font-size: 12px; color: #555; gap: 12px; flex-wrap: wrap; }
+  .stat-pill    { background: #1a1a1a; padding: 3px 10px; border-radius: 10px; color: #888; font-size: 12px; }
+
+  /* sparkline */
+  .sparkline-wrap { width: 120px; flex-shrink: 0; }
+  svg.sparkline   { width: 120px; height: 40px; }
+
+  /* backtest link */
+  .btn-backtest { padding: 6px 14px; border: 1px solid #336633; border-radius: 4px;
+                  color: #00cc66; background: none; font-family: inherit; font-size: 12px;
+                  cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .btn-backtest:hover { background: #0a1a0a; }
+
+  .empty-state { text-align: center; padding: 60px 20px; color: #444; }
+  .no-data-tag { display: inline-block; padding: 2px 8px; border-radius: 4px;
+                 background: #1a1a1a; color: #444; font-size: 11px; }
+</style>
+
+<div class="mkt-layout">
+
+  <!-- ── Sidebar ─────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="filter-card">
+      <div class="filter-title">Strategy Type</div>
+      <a th:href="@{/strategies}" class="filter-btn" th:classappend="${activeFilter == null} ? ' active'">All Strategies</a>
+      <a th:href="@{/strategies(type='Trend Following')}" class="filter-btn"
+         th:classappend="${activeFilter == 'Trend Following'} ? ' active'">Trend Following</a>
+      <a th:href="@{/strategies(type='Mean Reversion')}" class="filter-btn"
+         th:classappend="${activeFilter == 'Mean Reversion'} ? ' active'">Mean Reversion</a>
+      <a th:href="@{/strategies(type='Breakout')}" class="filter-btn"
+         th:classappend="${activeFilter == 'Breakout'} ? ' active'">Breakout</a>
+    </div>
+
+    <div class="filter-card">
+      <div class="filter-title">Trading Style</div>
+      <button class="filter-btn active">Intraday</button>
+    </div>
+
+    <div class="filter-card">
+      <div class="filter-title">Instrument</div>
+      <button class="filter-btn active">Nifty 50 Options</button>
+    </div>
+  </aside>
+
+  <!-- ── Main panel ─────────────────────────────────── -->
+  <div class="main-panel">
+
+    <div class="page-header">
+      <div class="page-title">
+        Strategy Marketplace
+        <span class="tag" th:text="${totalStrategies} + ' strategies'">7 strategies</span>
+      </div>
+      <div class="page-sub">
+        Live backtest performance · Nifty 50 intraday options · Auto-refreshed on each visit
+      </div>
+    </div>
+
+    <!-- column headers -->
+    <div style="display:flex; padding: 0 20px 8px; color:#555; font-size:11px; text-transform:uppercase; letter-spacing:1px; gap:16px;">
+      <span style="flex:1">Strategy</span>
+      <span style="width:100px; text-align:center">30-Day</span>
+      <span style="width:100px; text-align:center">90-Day</span>
+      <span style="width:100px; text-align:center">180-Day</span>
+      <span style="width:120px; text-align:center">Equity (30d)</span>
+      <span style="width:100px; text-align:center">Capital Req.</span>
+    </div>
+
+    <!-- strategy cards -->
+    <div th:if="${cards.isEmpty()}" class="empty-state">
+      <div style="font-size:32px; margin-bottom:12px;">&#128202;</div>
+      <div style="color:#666; margin-bottom:8px;">No candle data available yet.</div>
+      <div style="font-size:13px; color:#444;">
+        Import data via <a th:href="@{/backtest}" style="color:#00cc66;">Backtest → Fetch Yahoo</a>
+        or wait for the CandleFetchScheduler to populate data during market hours.
+      </div>
+    </div>
+
+    <div th:each="card : ${cards}" class="strat-card">
+      <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+
+        <!-- icon -->
+        <div class="strat-icon"
+             th:classappend="${card.strategyType() == 'Mean Reversion'} ? ' mean-rev' : (${card.strategyType() == 'Breakout'} ? ' breakout' : '')">
+          <span th:if="${card.strategyType() == 'Trend Following'}">&#128200;</span>
+          <span th:if="${card.strategyType() == 'Mean Reversion'}">&#8651;</span>
+          <span th:if="${card.strategyType() == 'Breakout'}">&#9889;</span>
+        </div>
+
+        <!-- name + metadata -->
+        <div class="strat-info">
+          <div class="strat-name" th:text="${card.displayName()}">Strategy Name</div>
+          <div class="strat-meta">
+            <span>
+              <span class="badge-type"
+                    th:classappend="${card.strategyType() == 'Trend Following'} ? ' badge-trend' : (${card.strategyType() == 'Mean Reversion'} ? ' badge-mr' : ' badge-bo')"
+                    th:text="${card.strategyType()}">Trend Following</span>
+            </span>
+            <span>&#9201; Intraday</span>
+            <span>&#128202; <span th:text="${card.timeframe()}">5m</span> candles</span>
+            <span>
+              <span class="badge-type"
+                    th:classappend="${card.promotable()} ? ' badge-promo' : ' badge-fail'"
+                    th:text="${card.promotable()} ? '✓ Promotable' : '✗ Review'">Promotable</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- 30-day return -->
+        <div style="width:100px; text-align:center;">
+          <div class="ret-label">30 Day</div>
+          <div class="ret-val"
+               th:classappend="${card.trades30d() == 0} ? ' na' : (${card.return30d().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pos' : ' neg')">
+            <span th:if="${card.trades30d() == 0}" class="no-data-tag">–</span>
+            <span th:if="${card.trades30d() > 0}" th:text="${card.return30d()} + '%'">0%</span>
+          </div>
+          <div th:if="${card.trades30d() > 0}" style="font-size:10px; color:#444; margin-top:2px;"
+               th:text="${card.trades30d()} + ' trades'">0 trades</div>
+        </div>
+
+        <!-- 90-day return -->
+        <div style="width:100px; text-align:center;">
+          <div class="ret-label">90 Day</div>
+          <div class="ret-val"
+               th:classappend="${card.trades90d() == 0} ? ' na' : (${card.return90d().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pos' : ' neg')">
+            <span th:if="${card.trades90d() == 0}" class="no-data-tag">–</span>
+            <span th:if="${card.trades90d() > 0}" th:text="${card.return90d()} + '%'">0%</span>
+          </div>
+          <div th:if="${card.trades90d() > 0}" style="font-size:10px; color:#444; margin-top:2px;"
+               th:text="${card.trades90d()} + ' trades'">0 trades</div>
+        </div>
+
+        <!-- 180-day return -->
+        <div style="width:100px; text-align:center;">
+          <div class="ret-label">180 Day</div>
+          <div class="ret-val"
+               th:classappend="${card.trades180d() == 0} ? ' na' : (${card.return180d().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pos' : ' neg')">
+            <span th:if="${card.trades180d() == 0}" class="no-data-tag">–</span>
+            <span th:if="${card.trades180d() > 0}" th:text="${card.return180d()} + '%'">0%</span>
+          </div>
+          <div th:if="${card.trades180d() > 0}" style="font-size:10px; color:#444; margin-top:2px;"
+               th:text="${card.trades180d()} + ' trades'">0 trades</div>
+        </div>
+
+        <!-- sparkline (inline SVG generated server-side) -->
+        <div class="sparkline-wrap">
+          <div class="ret-label" style="text-align:center; margin-bottom:4px;">Equity (30d)</div>
+          <th:block th:if="${card.equityCurve30d().size() > 1}">
+            <th:block th:with="
+              curve=${card.equityCurve30d()},
+              n=${curve.size()},
+              minV=${#aggregates.min(curve)},
+              maxV=${#aggregates.max(curve)},
+              svgW=120,
+              svgH=40
+            ">
+              <svg class="sparkline" viewBox="0 0 120 40">
+                <polyline
+                  th:with="
+                    range=${maxV.subtract(minV)},
+                    safeRange=${range.compareTo(T(java.math.BigDecimal).ZERO) == 0 ? T(java.math.BigDecimal).ONE : range}
+                  "
+                  th:attr="points=${T(com.niftyautotrader.service.backtest.SparklineHelper).buildPoints(curve, 120, 40)}"
+                  fill="none"
+                  th:stroke="${card.return30d().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? '#00ff88' : '#ff4444'"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"/>
+              </svg>
+            </th:block>
+          </th:block>
+          <div th:if="${card.equityCurve30d().size() <= 1}" style="height:40px; display:flex; align-items:center; justify-content:center; color:#333; font-size:11px;">no data</div>
+        </div>
+
+        <!-- capital required -->
+        <div style="width:100px; text-align:center;">
+          <div class="ret-label">Min Capital</div>
+          <div style="font-size:15px; color:#ccc; font-weight:bold;"
+               th:text="'₹' + ${#numbers.formatInteger(card.minCapitalInr(), 0, 'COMMA')}">₹50,000</div>
+          <div style="font-size:10px; color:#444; margin-top:2px;">margin approx</div>
+        </div>
+
+      </div><!-- end flex row -->
+
+      <!-- footer stats + backtest link -->
+      <div class="strat-footer">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <span class="stat-pill" th:if="${card.trades30d() > 0}">
+            Win Rate: <span th:text="${#numbers.formatDecimal(card.winRate30d() * 100, 1, 1)} + '%'">0%</span>
+          </span>
+          <span class="stat-pill" th:if="${card.trades30d() > 0}">
+            PF: <span th:text="${#numbers.formatDecimal(card.profitFactor30d(), 1, 2)}">0</span>
+          </span>
+          <span class="stat-pill" th:if="${card.trades30d() > 0}">
+            Max DD: <span th:text="'₹' + ${card.maxDrawdown30d().setScale(0, T(java.math.RoundingMode).HALF_UP)}">₹0</span>
+          </span>
+          <span class="stat-pill" th:if="${card.trades30d() > 0}">
+            Expectancy: <span th:text="'₹' + ${card.expectancy30d().setScale(0, T(java.math.RoundingMode).HALF_UP)}">₹0</span>
+          </span>
+        </div>
+        <a th:href="@{/backtest(strategyName=${card.name()})}" class="btn-backtest">Run Full Backtest &#8594;</a>
+      </div>
+
+    </div><!-- end strat-card -->
+
+    <div style="margin-top:24px; padding: 14px 16px; background:#0d0d0d; border: 1px solid #1a1a1a; border-radius:6px; font-size:12px; color:#444;">
+      <strong style="color:#555;">Disclaimer:</strong>
+      Performance figures are based on historical backtesting with realistic slippage (0.02%) and brokerage costs.
+      Past performance does not guarantee future results. Paper trade before going live.
+      Data source: Nifty 50 5-minute candles (Dhan API / Yahoo Finance).
+    </div>
+
+  </div><!-- end main-panel -->
+</div><!-- end mkt-layout -->
+
+</body>
+</html>

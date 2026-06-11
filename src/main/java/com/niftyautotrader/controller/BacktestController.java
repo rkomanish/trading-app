@@ -113,9 +113,13 @@ public class BacktestController {
     }
 
     @GetMapping
-    public String backtestForm(Model model) {
+    public String backtestForm(@RequestParam(required = false) String strategyName,
+                               Model model) {
         model.addAttribute("strategies", strategiesByName.keySet());
         model.addAttribute("symbol", "NIFTY");
+        if (strategyName != null) {
+            model.addAttribute("selectedStrategy", strategyName);
+        }
         return "backtest";
     }
 
