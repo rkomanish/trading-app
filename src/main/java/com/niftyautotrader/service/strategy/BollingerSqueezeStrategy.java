@@ -12,41 +12,62 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-/**
- * Bollinger Band Squeeze Breakout — 5m candles.
- *
- * Squeeze = BB width at 20-bar minimum. First expansion = breakout signal.
- *
- * Loss-control improvements:
- *   - SL capped at 1.0×ATR from entry (was: midline which could be 150+ points away)
- *   - ADX filter: breakout direction must align with ADX trend (ADX > 18)
- *   - Volume threshold raised: 1.2× → 1.5× average (stronger conviction required)
- *   - Squeeze threshold tightened: 1.15× → 1.05× minimum width
- *     (must be a real squeeze, not just slightly narrow bands)
- *   - Price must close clearly outside the band (not just pierce by 1 tick)
- *   - Minimum R:R check: 1.5:1
- */
 @Component
-public class BollingerSqueezeStrategy implements TradingStrategy {
+public class BollingerSqueezeStrategy implements TunableStrategy {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final LocalTime START = LocalTime.of(9, 30);
     private static final LocalTime END   = LocalTime.of(13, 0);
-    private static final int BB_PERIOD = 20;
-    private static final double BB_MULT = 2.0;
-    private static final int SQUEEZE_LOOKBACK = 20;
-    private static final int MIN_CANDLES = BB_PERIOD + SQUEEZE_LOOKBACK + 10;
+    private static final int BB_PERIOD = 20; private static final double BB_MULT = 2.0;
+    private static final int SQUEEZE_LB = 20;
+    private static final int MIN_CANDLES = BB_PERIOD + SQUEEZE_LB + 10;
+
+    private final double adxMin;
+    private final double slAtrCap;
+    private final double targetAtrMult;
+    private final double volMult;
+
+    public BollingerSqueezeStrategy() { this(15, 1.0, 2.0, 1.2); }
+
+    private BollingerSqueezeStrategy(double adxMin, double slAtrCap, double targetAtrMult, double volMult) {
+        this.adxMin = adxMin; this.slAtrCap = slAtrCap;
+        this.targetAtrMult = targetAtrMult; this.volMult = volMult;
+    }
+
+    @Override public String getName() { return "BOLLINGER_SQUEEZE_BREAKOUT"; }
 
     @Override
-    public String getName() { return "BOLLINGER_SQUEEZE_BREAKOUT"; }
+    public Map<String, Double> currentParams() {
+        return Map.of("adxMin", adxMin, "slAtrCap", slAtrCap,
+            "targetAtrMult", targetAtrMult, "volMult", volMult);
+    }
+
+    @Override
+    public Map<String, double[]> paramGrid() {
+        return Map.of(
+            "adxMin",        new double[]{12, 15, 18},
+            "slAtrCap",      new double[]{0.8, 1.0, 1.2},
+            "targetAtrMult", new double[]{1.8, 2.0, 2.5}
+        );
+    }
+
+    @Override
+    public TradingStrategy withParams(Map<String, Double> p) {
+        return new BollingerSqueezeStrategy(
+            p.getOrDefault("adxMin",        adxMin),
+            p.getOrDefault("slAtrCap",      slAtrCap),
+            p.getOrDefault("targetAtrMult", targetAtrMult),
+            p.getOrDefault("volMult",       volMult)
+        );
+    }
 
     @Override
     public Optional<Signal> evaluate(MarketContext ctx) {
         LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
-        if (t.isBefore(START) || t.isAfter(END)) return Optional.empty();
-        if (ctx.adx() < 18) return Optional.empty(); // need some directional bias
+        if (t.isBefore(START) || t.isAfter(END) || ctx.adx() < adxMin) return Optional.empty();
 
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
@@ -55,76 +76,54 @@ public class BollingerSqueezeStrategy implements TradingStrategy {
         long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
         int n = closes.length;
 
-        // Compute BB width over lookback — find minimum
-        double minWidth = Double.MAX_VALUE;
-        for (int i = n - SQUEEZE_LOOKBACK; i < n - 1; i++) {
+        // Detect squeeze: look for a recent tight period, then current expansion/breakout
+        // Squeeze = current BB width has expanded vs the minimum of the last SQUEEZE_LB bars
+        double minWidthRecent = Double.MAX_VALUE;
+        for (int i = n - SQUEEZE_LB; i < n - 3; i++) {
             double[] slice = Arrays.copyOfRange(closes, Math.max(0, i - BB_PERIOD + 1), i + 1);
             if (slice.length < BB_PERIOD) continue;
             var bb = IndicatorUtils.bollingerBandsLast(slice, BB_PERIOD, BB_MULT);
-            double width = bb.upper() - bb.lower();
-            if (width < minWidth) minWidth = width;
+            minWidthRecent = Math.min(minWidthRecent, bb.upper() - bb.lower());
         }
 
         var bbNow = IndicatorUtils.bollingerBandsLast(closes, BB_PERIOD, BB_MULT);
-        double currentWidth = bbNow.upper() - bbNow.lower();
+        // Require that bands are NOW expanding from the recent squeeze (current > min * 1.02)
+        if (minWidthRecent == Double.MAX_VALUE) return Optional.empty();
+        if (bbNow.upper() - bbNow.lower() < minWidthRecent * 1.02) return Optional.empty();
 
-        // Strict squeeze: current width must be very close to the 20-bar minimum
-        if (currentWidth > minWidth * 1.05) return Optional.empty();
-
-        double price = closes[n - 1];
-        double atr   = ctx.currentAtr();
-
-        // Volume: need 1.5× average (strong breakout conviction)
         long avgVol = 0;
-        for (int i = n - SQUEEZE_LOOKBACK; i < n; i++) avgVol += vols[i];
-        avgVol /= SQUEEZE_LOOKBACK;
-        if (vols[n - 1] < avgVol * 1.5) return Optional.empty();
+        for (int i = n - SQUEEZE_LB; i < n; i++) avgVol += vols[i];
+        avgVol /= SQUEEZE_LB;
+        if (vols[n-1] < avgVol * volMult) return Optional.empty();
 
-        // Price must close clearly outside band (at least 0.1×ATR beyond)
+        double price = closes[n-1], atr = ctx.currentAtr();
+
         if (price > bbNow.upper() + atr * 0.1) {
-            // SL = midline OR 1×ATR below entry — whichever is closer (less loss)
-            double slMid = bbNow.middle();
-            double slAtr = price - atr * 1.0;
-            double sl    = Math.max(slMid, slAtr); // higher of the two = less risk
-            double target = price + atr * 2.0;
-            if (!validRR(price, sl, target, true)) return Optional.empty();
-            return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, sl, target,
-                String.format("BB squeeze UP: width=%.1f/min=%.1f close=%.0f>upper=%.0f vol=%dx",
-                    currentWidth, minWidth, price, bbNow.upper(), vols[n-1]/Math.max(1,avgVol))));
+            double sl  = Math.max(bbNow.middle(), price - atr * slAtrCap);
+            double tgt = price + atr * targetAtrMult;
+            if (Math.abs(price - sl) <= 0 || (tgt - price) / Math.abs(price - sl) < 1.5) return Optional.empty();
+            return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, sl, tgt,
+                String.format("BB squeeze UP close=%.0f>upper=%.0f ADX=%.1f", price, bbNow.upper(), ctx.adx())));
         }
-
         if (price < bbNow.lower() - atr * 0.1) {
-            double slMid = bbNow.middle();
-            double slAtr = price + atr * 1.0;
-            double sl    = Math.min(slMid, slAtr); // lower of the two = less risk
-            double target = price - atr * 2.0;
-            if (!validRR(price, sl, target, false)) return Optional.empty();
-            return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, sl, target,
-                String.format("BB squeeze DOWN: width=%.1f/min=%.1f close=%.0f<lower=%.0f vol=%dx",
-                    currentWidth, minWidth, price, bbNow.lower(), vols[n-1]/Math.max(1,avgVol))));
+            double sl  = Math.min(bbNow.middle(), price + atr * slAtrCap);
+            double tgt = price - atr * targetAtrMult;
+            if (Math.abs(price - sl) <= 0 || (price - tgt) / Math.abs(price - sl) < 1.5) return Optional.empty();
+            return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, sl, tgt,
+                String.format("BB squeeze DOWN close=%.0f<lower=%.0f ADX=%.1f", price, bbNow.lower(), ctx.adx())));
         }
-
         return Optional.empty();
-    }
-
-    private boolean validRR(double entry, double sl, double target, boolean isBull) {
-        double risk   = Math.abs(entry - sl);
-        double reward = isBull ? target - entry : entry - target;
-        return risk > 0 && reward / risk >= 1.5;
     }
 
     private Signal signal(MarketContext ctx, SignalDirection dir, double price,
                            double sl, double target, String reason) {
         Signal s = new Signal();
-        s.setGeneratedAt(ZonedDateTime.now());
-        s.setStrategyName(getName());
-        s.setSymbol(ctx.symbol());
-        s.setDirection(dir);
+        s.setGeneratedAt(ZonedDateTime.now()); s.setStrategyName(getName());
+        s.setSymbol(ctx.symbol()); s.setDirection(dir);
         s.setSuggestedEntry(BigDecimal.valueOf(price));
         s.setSuggestedStopLoss(BigDecimal.valueOf(sl));
         s.setSuggestedTarget(BigDecimal.valueOf(target));
-        s.setLots(1);
-        s.setReasoning(reason);
+        s.setLots(1); s.setReasoning(reason);
         return s;
     }
 }

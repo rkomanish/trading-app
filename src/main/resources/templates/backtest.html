@@ -5,335 +5,458 @@
 <nav th:replace="~{fragments/layout :: nav('backtest')}"></nav>
 
 <style>
-  /* ── trade log table ── */
-  .trade-log th  { font-size: 10px; padding: 6px 8px; }
-  .trade-log td  { font-size: 12px; padding: 6px 8px; font-family: monospace; }
-  .win-row  td   { border-left: 2px solid #00ff88; }
-  .loss-row td   { border-left: 2px solid #ff4444; }
-  .exit-target   { color: #00ff88; font-weight: bold; }
-  .exit-sl       { color: #ff4444; font-weight: bold; }
-  .exit-time     { color: #ffcc00; }
-  .pnl-pos       { color: #00ff88; }
-  .pnl-neg       { color: #ff4444; }
-  .dir-ce        { color: #00aaff; }
-  .dir-pe        { color: #ff8844; }
-
-  /* ── daily table ── */
-  .daily-table th { font-size: 10px; padding: 5px 10px; }
-  .daily-table td { font-size: 13px; padding: 5px 10px; }
-
-  /* ── summary bar ── */
-  .stat-bar    { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-  .stat-chip   { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px;
-                 padding: 10px 16px; min-width: 120px; }
-  .chip-val    { font-size: 20px; font-weight: bold; color: #fff; }
-  .chip-lbl    { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
-
-  /* ── equity bar chart (CSS only) ── */
-  .eq-bar-wrap { display: flex; align-items: flex-end; gap: 2px; height: 60px; margin-top: 8px; }
-  .eq-bar      { flex: 1; min-width: 3px; border-radius: 2px 2px 0 0; }
-
-  .section-title { color: #888; font-size: 11px; text-transform: uppercase;
-                   letter-spacing: 1px; margin-bottom: 10px; margin-top: 4px; }
-  .scrollable    { max-height: 420px; overflow-y: auto; }
+  .trade-log th  { font-size:10px; padding:5px 7px; }
+  .trade-log td  { font-size:11px; padding:5px 7px; font-family:monospace; }
+  .win-row  td   { border-left:2px solid #00ff88; }
+  .loss-row td   { border-left:2px solid #ff4444; }
+  .exit-target   { color:#00ff88; font-weight:bold; }
+  .exit-sl       { color:#ff4444; font-weight:bold; }
+  .exit-time     { color:#ffcc00; }
+  .exit-trail    { color:#aaffaa; font-weight:bold; }
+  .pnl-pos       { color:#00ff88; }
+  .pnl-neg       { color:#ff4444; }
+  .dir-ce        { color:#00aaff; }
+  .dir-pe        { color:#ff8844; }
+  .section-title { color:#888; font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; }
+  .stat-bar      { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  .stat-chip     { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:6px; padding:10px 14px; min-width:110px; }
+  .chip-val      { font-size:18px; font-weight:bold; color:#fff; }
+  .chip-lbl      { font-size:10px; color:#555; text-transform:uppercase; letter-spacing:1px; margin-top:3px; }
+  .scrollable    { max-height:380px; overflow-y:auto; }
+  /* optimizer */
+  .opt-badge     { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:bold; }
+  .opt-best      { background:#003300; color:#00ff88; border:1px solid #00ff88; }
+  .opt-default   { background:#1a1a1a; color:#aaa; border:1px solid #333; }
+  /* history table */
+  .hist-table th { font-size:10px; padding:5px 8px; }
+  .hist-table td { font-size:12px; padding:5px 8px; }
+  /* Claude panel */
+  .claude-panel  { background:#0a0a1a; border:1px solid #334; border-radius:8px; padding:16px; margin-bottom:16px; }
+  .claude-title  { color:#88aaff; font-size:13px; font-weight:bold; margin-bottom:10px; }
+  .suggestion-item { background:#111; border-left:3px solid #336; padding:8px 12px;
+                     border-radius:0 4px 4px 0; margin-bottom:6px; font-size:13px; color:#ccc; }
+  .suggestion-item.new    { border-left-color:#00cc66; }
+  .suggestion-item.remove { border-left-color:#cc4400; }
+  .impact-box    { background:#0a1a0a; border:1px solid #336633; border-radius:4px; padding:10px 14px;
+                   color:#88ff88; font-size:13px; margin-top:10px; }
+  /* tabs */
+  .tab-bar       { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid #222; padding-bottom:0; }
+  .tab-btn       { padding:8px 16px; background:none; border:none; color:#666; cursor:pointer;
+                   font-family:inherit; font-size:13px; border-bottom:2px solid transparent; }
+  .tab-btn.active { color:#fff; border-bottom-color:#00ff88; }
+  .tab-pane      { display:none; }
+  .tab-pane.active { display:block; }
 </style>
 
 <div class="container">
-
   <div class="alert alert-success" th:if="${importMessage}" th:text="${importMessage}"></div>
   <div class="alert alert-danger"  th:if="${importError}"   th:text="${importError}"></div>
 
-  <!-- ── Data Import ─────────────────────────────────── -->
-  <div class="card">
-    <div class="card-title">Fetch From Yahoo Finance</div>
-    <div style="color:#555;font-size:12px;margin-bottom:12px">
-      Pulls real Nifty 50 index candles (^NSEI) from Yahoo. Intraday data limited to ~last 60 days.
-    </div>
-    <form method="post" th:action="@{/backtest/fetch-yahoo}" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-      <div class="form-group" style="margin:0">
-        <label>Interval</label>
-        <select name="interval">
-          <option value="5m" selected>5m</option>
-          <option value="15m">15m</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Range</label>
-        <select name="range">
-          <option value="5d">5 days</option>
-          <option value="1mo" selected>1 month</option>
-          <option value="3mo">3 months (15m only)</option>
-        </select>
-      </div>
-      <input type="hidden" name="yahooSymbol" value="^NSEI"/>
-      <input type="hidden" name="symbol" value="NIFTY"/>
-      <button type="submit" class="btn btn-primary">Fetch into DB</button>
-      <a th:href="@{/backtest/download-yahoo-csv}" class="btn btn-primary" style="text-decoration:none">Download CSV</a>
-    </form>
+  <!-- ── Tabs ── -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="showTab('tab-run')">&#9654; Run Backtest</button>
+    <button class="tab-btn" onclick="showTab('tab-history')">&#128202; History</button>
+    <button class="tab-btn" onclick="showTab('tab-data')">&#128229; Import Data</button>
   </div>
 
-  <div class="card">
-    <div class="card-title">Import Historical CSV</div>
-    <div style="color:#555;font-size:12px;margin-bottom:12px">
-      Format: <code>timestamp,open,high,low,close,volume</code> (header row, IST timestamps like <code>2024-01-15 09:15:00</code>)
-    </div>
-    <form method="post" th:action="@{/backtest/import-csv}" enctype="multipart/form-data"
-          style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-      <div class="form-group" style="margin:0">
-        <label>CSV File</label>
-        <input type="file" name="file" accept=".csv" required/>
+  <!-- ══ TAB: Run Backtest ══════════════════════════════════════ -->
+  <div id="tab-run" class="tab-pane active">
+
+    <div class="card">
+      <div class="card-title">Backtest Configuration</div>
+      <div style="color:#555;font-size:12px;margin-bottom:14px">
+        Fix <strong>From / To dates</strong> for reproducible results.
+        <strong>Optimize Parameters</strong> runs 27 combinations and picks the best.
+        <strong>Ask Claude</strong> runs optimizer first then sends results to Claude AI for suggestions.
       </div>
-      <div class="form-group" style="margin:0">
-        <label>Symbol</label>
-        <input type="text" name="symbol" value="NIFTY" style="width:90px"/>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Timeframe</label>
-        <select name="timeframe">
-          <option value="5m" selected>5m</option>
-          <option value="15m">15m</option>
-          <option value="1m">1m</option>
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary">Import</button>
-    </form>
-  </div>
-
-  <!-- ── Backtest Runner ──────────────────────────────── -->
-  <div class="card">
-    <div class="card-title">Run Backtest</div>
-    <div style="color:#555;font-size:12px;margin-bottom:12px">
-      Fix <strong>From / To dates</strong> to get the same result every time.
-      Leave blank to use all available data.
-    </div>
-    <form method="post" th:action="@{/backtest/run}">
-      <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-        <div class="form-group" style="margin:0">
-          <label>Strategy</label>
-          <select name="strategyName">
-            <option th:each="s : ${strategies}" th:value="${s}" th:text="${s}"
-                    th:selected="${s == selectedStrategy}"></option>
-          </select>
+      <form id="btForm" method="post" th:action="@{/backtest/run}">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="margin:0">
+            <label>Strategy</label>
+            <select name="strategyName" id="stratSelect">
+              <option th:each="s:${strategies}" th:value="${s}" th:text="${s}"
+                      th:selected="${s==selectedStrategy}"></option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Symbol</label>
+            <input type="text" name="symbol" th:value="${symbol?:'NIFTY'}" style="width:80px"/>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>From Date</label>
+            <input type="date" name="fromDate" th:value="${fromDate?:defaultFromDate}" style="width:140px"/>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>To Date</label>
+            <input type="date" name="toDate" th:value="${toDate?:defaultToDate}" style="width:140px"/>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Windows</label>
+            <select name="windows">
+              <option value="2">2</option><option value="4" selected>4</option><option value="6">6</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">&#9654; Run Backtest</button>
+          <button type="button" class="btn btn-primary" style="background:#001a33;color:#4499ff;border-color:#4499ff"
+                  onclick="submitTo('/backtest/optimize')">&#9881; Optimize Parameters</button>
+          <button type="button" class="btn btn-primary" style="background:#0a001a;color:#bb88ff;border-color:#bb88ff"
+                  onclick="submitTo('/backtest/enhance')">&#x1F916; Ask Claude AI</button>
         </div>
-        <div class="form-group" style="margin:0">
-          <label>Symbol</label>
-          <input type="text" name="symbol" th:value="${symbol ?: 'NIFTY'}" style="width:90px"/>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>From Date</label>
-          <input type="date" name="fromDate"
-                 th:value="${fromDate ?: defaultFromDate}" style="width:140px"/>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>To Date</label>
-          <input type="date" name="toDate"
-                 th:value="${toDate ?: defaultToDate}" style="width:140px"/>
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>Walk-Forward Windows</label>
-          <select name="windows">
-            <option value="2">2 windows</option>
-            <option value="4" selected>4 windows</option>
-            <option value="6">6 windows</option>
-          </select>
-        </div>
-        <button type="submit" class="btn btn-primary">Run Backtest</button>
-      </div>
-    </form>
-  </div>
-
-  <div class="alert alert-danger" th:if="${error}" th:text="${error}"></div>
-
-  <!-- ── Results ─────────────────────────────────────── -->
-  <div th:if="${result != null}">
-
-    <!-- verdict banner -->
-    <div th:class="${result.promotable()} ? 'alert alert-success' : 'alert alert-danger'"
-         th:text="${result.verdict()}"></div>
-
-    <!-- data range info -->
-    <div style="color:#555;font-size:12px;margin-bottom:16px;background:#0d0d0d;padding:10px 14px;border-radius:4px;border:1px solid #1a1a1a">
-      &#128197;
-      Data: <strong style="color:#888" th:text="${result.dataFrom()} + ' → ' + ${result.dataTo()}">—</strong>
-      &nbsp;|&nbsp;
-      <strong style="color:#888" th:text="${result.tradingDaysWithData()}">0</strong> trading days with candle data
-      &nbsp;|&nbsp;
-      <strong style="color:#888" th:text="${result.totalTrades()}">0</strong> total trades
-      &nbsp;|&nbsp;
-      Avg <strong style="color:#888"
-          th:text="${result.tradingDaysWithData() > 0 ?
-            #numbers.formatDecimal(result.totalTrades() * 1.0 / result.tradingDaysWithData(), 1, 1) : '—'}">0</strong>
-      trades/day
+      </form>
     </div>
 
-    <!-- ── Summary stat chips ── -->
-    <div class="stat-bar">
-      <div class="stat-chip">
-        <div class="chip-val" th:text="${result.totalTrades()}">0</div>
-        <div class="chip-lbl">Total Trades</div>
+    <div class="alert alert-danger" th:if="${error}" th:text="${error}"></div>
+
+    <!-- ── Results ─────────────────────────────────────────────── -->
+    <div th:if="${result != null}">
+
+      <div th:class="${result.promotable()} ? 'alert alert-success' : 'alert alert-danger'"
+           th:text="${result.verdict()}"></div>
+
+      <!-- data range bar -->
+      <div style="color:#555;font-size:12px;margin-bottom:16px;background:#0d0d0d;
+                  padding:10px 14px;border-radius:4px;border:1px solid #1a1a1a">
+        &#128197;
+        <strong style="color:#888" th:text="${result.dataFrom()+' → '+result.dataTo()}">—</strong>
+        &nbsp;|&nbsp;
+        <strong style="color:#888" th:text="${result.tradingDaysWithData()}">0</strong> trading days
+        &nbsp;|&nbsp;
+        <strong style="color:#888" th:text="${result.totalTrades()}">0</strong> trades
+        &nbsp;|&nbsp; avg
+        <strong style="color:#888"
+          th:text="${result.tradingDaysWithData()>0 ?
+            #numbers.formatDecimal(result.totalTrades()*1.0/result.tradingDaysWithData(),1,1) : '—'}">0</strong>/day
+        <span th:if="${optResult != null}"
+              style="margin-left:16px;color:#4499ff">
+          &#9881; Optimizer ran <span th:text="${optResult.totalTrials()}">0</span> combinations.
+          <span th:text="${optResult.improvement()}"></span>
+        </span>
       </div>
-      <div class="stat-chip">
-        <div class="chip-val"
-             th:classappend="${result.winRate() > 0.5} ? ' green' : ' red'"
-             th:text="${#numbers.formatDecimal(result.winRate() * 100, 1, 1)} + '%'">0%</div>
-        <div class="chip-lbl" th:text="${result.winningTrades()} + 'W / ' + ${result.losingTrades()} + 'L'">0W/0L</div>
-      </div>
-      <div class="stat-chip">
-        <div class="chip-val"
-             th:classappend="${result.totalNetPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' green' : ' red'"
-             th:text="'₹' + ${#numbers.formatDecimal(result.totalNetPnl(), 1, 0)}">₹0</div>
-        <div class="chip-lbl">Net P&amp;L</div>
-      </div>
-      <div class="stat-chip">
-        <div class="chip-val"
-             th:classappend="${result.profitFactor() > 1} ? ' green' : ' red'"
-             th:text="${#numbers.formatDecimal(result.profitFactor(), 1, 2)}">0</div>
-        <div class="chip-lbl">Profit Factor</div>
-      </div>
-      <div class="stat-chip">
-        <div class="chip-val"
-             th:classappend="${result.expectancyPerTrade().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' green' : ' red'"
-             th:text="'₹' + ${#numbers.formatDecimal(result.expectancyPerTrade(), 1, 0)}">₹0</div>
-        <div class="chip-lbl">Expectancy/Trade</div>
-      </div>
-      <div class="stat-chip">
-        <div class="chip-val red"
-             th:text="'₹' + ${#numbers.formatDecimal(result.maxDrawdown(), 1, 0)}">₹0</div>
-        <div class="chip-lbl">Max Drawdown</div>
-      </div>
-      <div class="stat-chip">
-        <div>
-          <span class="green" th:text="'₹' + ${#numbers.formatDecimal(result.avgWin(), 1, 0)}">₹0</span>
-          <span style="color:#444"> / </span>
-          <span class="red" th:text="'₹' + ${#numbers.formatDecimal(result.avgLoss(), 1, 0)}">₹0</span>
+
+      <!-- stats -->
+      <div class="stat-bar">
+        <div class="stat-chip">
+          <div class="chip-val" th:text="${result.totalTrades()}">0</div>
+          <div class="chip-lbl">Total Trades</div>
         </div>
-        <div class="chip-lbl">Avg Win / Avg Loss</div>
+        <div class="stat-chip">
+          <div class="chip-val" th:classappend="${result.winRate()>0.5}?' green':' red'"
+               th:text="${#numbers.formatDecimal(result.winRate()*100,1,1)}+'%'">0%</div>
+          <div class="chip-lbl" th:text="${result.winningTrades()}+'W / '+${result.losingTrades()}+'L'"></div>
+        </div>
+        <div class="stat-chip">
+          <div class="chip-val"
+               th:classappend="${result.totalNetPnl().compareTo(T(java.math.BigDecimal).ZERO)>=0}?' green':' red'"
+               th:text="'₹'+${#numbers.formatDecimal(result.totalNetPnl(),1,0)}">₹0</div>
+          <div class="chip-lbl">Net P&amp;L</div>
+        </div>
+        <div class="stat-chip">
+          <div class="chip-val" th:classappend="${result.profitFactor()>1}?' green':' red'"
+               th:text="${#numbers.formatDecimal(result.profitFactor(),1,2)}">0</div>
+          <div class="chip-lbl">Profit Factor</div>
+        </div>
+        <div class="stat-chip">
+          <div class="chip-val"
+               th:classappend="${result.expectancyPerTrade().compareTo(T(java.math.BigDecimal).ZERO)>=0}?' green':' red'"
+               th:text="'₹'+${#numbers.formatDecimal(result.expectancyPerTrade(),1,0)}">₹0</div>
+          <div class="chip-lbl">Expectancy/Trade</div>
+        </div>
+        <div class="stat-chip">
+          <div class="chip-val red"
+               th:text="'₹'+${#numbers.formatDecimal(result.maxDrawdown(),1,0)}">₹0</div>
+          <div class="chip-lbl">Max Drawdown</div>
+        </div>
+        <div class="stat-chip">
+          <div>
+            <span class="green" th:text="'₹'+${#numbers.formatDecimal(result.avgWin(),1,0)}">₹0</span>
+            <span style="color:#444"> / </span>
+            <span class="red" th:text="'₹'+${#numbers.formatDecimal(result.avgLoss(),1,0)}">₹0</span>
+          </div>
+          <div class="chip-lbl">Avg Win / Avg Loss</div>
+        </div>
+        <div class="stat-chip">
+          <div class="chip-val red" th:text="'₹'+${#numbers.formatDecimal(result.totalCosts(),1,0)}">₹0</div>
+          <div class="chip-lbl">Total Costs</div>
+        </div>
       </div>
-      <div class="stat-chip">
-        <div class="chip-val red"
-             th:text="'₹' + ${#numbers.formatDecimal(result.totalCosts(), 1, 0)}">₹0</div>
-        <div class="chip-lbl">Total Costs Paid</div>
+
+      <!-- ── Claude AI Enhancement Panel ── -->
+      <div th:if="${enhancement != null}" class="claude-panel">
+        <div class="claude-title">&#x1F916; Claude AI Strategy Enhancement — <span th:text="${enhancement.strategyName()}"></span></div>
+        <div style="color:#aaa;font-size:13px;margin-bottom:12px;line-height:1.6" th:text="${enhancement.summary()}"></div>
+
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <div class="section-title">&#9999; Rule Changes</div>
+            <div th:each="r:${enhancement.ruleChanges()}" class="suggestion-item" th:text="${r}"></div>
+            <div th:if="${enhancement.ruleChanges().isEmpty()}" style="color:#444;font-size:12px">None suggested</div>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <div class="section-title">&#10133; New Filters to Add</div>
+            <div th:each="f:${enhancement.newFilters()}" class="suggestion-item new" th:text="${f}"></div>
+            <div th:if="${enhancement.newFilters().isEmpty()}" style="color:#444;font-size:12px">None</div>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <div class="section-title">&#10134; Filters to Remove</div>
+            <div th:each="f:${enhancement.removeFilters()}" class="suggestion-item remove" th:text="${f}"></div>
+            <div th:if="${enhancement.removeFilters().isEmpty()}" style="color:#444;font-size:12px">None</div>
+          </div>
+        </div>
+        <div class="impact-box" th:if="${!#strings.isEmpty(enhancement.expectedImpact())}">
+          &#127919; <strong>Expected Impact:</strong> <span th:text="${enhancement.expectedImpact()}"></span>
+        </div>
       </div>
-    </div>
 
-    <!-- ── Two-column: Daily P&L + Trade Log ── -->
-    <div class="grid-2">
-
-      <!-- Daily P&L -->
-      <div class="card">
-        <div class="section-title">Daily P&amp;L Breakdown</div>
+      <!-- ── Optimizer Trials Table ── -->
+      <div th:if="${optResult != null}" class="card">
+        <div class="section-title">&#9881; All Parameter Combinations Tried
+          (<span th:text="${optResult.totalTrials()}">0</span> total, sorted by score)</div>
         <div class="scrollable">
-          <table class="daily-table" style="width:100%;border-collapse:collapse">
+          <table style="width:100%;border-collapse:collapse" class="hist-table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Day</th>
+                <th>Rank</th>
+                <th>Parameters</th>
+                <th>Score</th>
+                <th style="text-align:right">Trades</th>
+                <th style="text-align:right">Win%</th>
+                <th style="text-align:right">PF</th>
+                <th style="text-align:right">Expectancy</th>
                 <th style="text-align:right">Net P&amp;L</th>
-                <th style="text-align:right">Running Total</th>
+                <th>Status</th>
               </tr>
             </thead>
-            <tbody th:if="${!result.dailyPnl().isEmpty()}">
-              <tr th:each="entry, stat : ${result.dailyPnl().entrySet()}"
-                  th:with="isPos=${entry.value.compareTo(T(java.math.BigDecimal).ZERO) >= 0}">
-                <td th:text="${entry.key}">2024-01-01</td>
-                <td style="color:#555" th:text="${entry.key.dayOfWeek.toString().substring(0,3)}">MON</td>
+            <tbody>
+              <tr th:each="t,stat:${optResult.allTrials()}"
+                  th:style="${stat.index==0}?'background:#0a1a0a':''">
+                <td th:text="${stat.index+1}" style="color:#555"></td>
+                <td style="font-size:11px;color:#aaa" th:text="${t.params()}"></td>
+                <td th:text="${#numbers.formatDecimal(t.score(),1,2)}"
+                    th:classappend="${stat.index==0}?' pnl-pos':' '"></td>
+                <td style="text-align:right" th:text="${t.trades()}"></td>
                 <td style="text-align:right"
-                    th:classappend="${isPos} ? ' pnl-pos' : ' pnl-neg'"
-                    th:text="(${isPos} ? '+' : '') + '₹' + ${#numbers.formatDecimal(entry.value, 1, 0)}">₹0</td>
-                <td style="text-align:right; color:#666; font-size:11px">—</td>
+                    th:classappend="${t.winRate()>0.6}?' pnl-pos':(${t.winRate()>0.5}?' yellow':' pnl-neg')"
+                    th:text="${#numbers.formatDecimal(t.winRate()*100,1,1)}+'%'"></td>
+                <td style="text-align:right"
+                    th:classappend="${t.profitFactor()>1}?' pnl-pos':' pnl-neg'"
+                    th:text="${#numbers.formatDecimal(t.profitFactor(),1,2)}"></td>
+                <td style="text-align:right"
+                    th:classappend="${t.expectancy().compareTo(T(java.math.BigDecimal).ZERO)>0}?' pnl-pos':' pnl-neg'"
+                    th:text="'₹'+${#numbers.formatDecimal(t.expectancy(),1,0)}"></td>
+                <td style="text-align:right"
+                    th:classappend="${t.netPnl().compareTo(T(java.math.BigDecimal).ZERO)>0}?' pnl-pos':' pnl-neg'"
+                    th:text="'₹'+${#numbers.formatDecimal(t.netPnl(),1,0)}"></td>
+                <td>
+                  <span th:if="${stat.index==0}" class="opt-badge opt-best">&#9733; BEST</span>
+                  <span th:if="${stat.index>0 and t.promotable()}" class="opt-badge" style="background:#001a00;color:#88cc88;border:1px solid #336633">&#10003; OK</span>
+                  <span th:if="${stat.index>0 and !t.promotable()}" class="opt-badge" style="background:#1a0000;color:#884444;border:1px solid #440000">&#10007;</span>
+                </td>
               </tr>
-            </tbody>
-            <tbody th:if="${result.dailyPnl().isEmpty()}">
-              <tr><td colspan="4" style="color:#444;text-align:center;padding:20px">No trades in selected period</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- Trade-by-trade log -->
-      <div class="card">
-        <div class="section-title">
-          Trade Log
-          <span style="color:#444;font-weight:normal"> — each simulated trade in chronological order</span>
+      <!-- ── Daily P&L + Trade Log ── -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="section-title">Daily P&amp;L</div>
+          <div class="scrollable">
+            <table class="hist-table" style="width:100%;border-collapse:collapse">
+              <thead><tr><th>Date</th><th>Day</th><th style="text-align:right">Net P&amp;L</th></tr></thead>
+              <tbody th:if="${!result.dailyPnl().isEmpty()}">
+                <tr th:each="e:${result.dailyPnl().entrySet()}"
+                    th:with="pos=${e.value.compareTo(T(java.math.BigDecimal).ZERO)>=0}">
+                  <td th:text="${e.key}"></td>
+                  <td style="color:#555" th:text="${e.key.dayOfWeek.toString().substring(0,3)}"></td>
+                  <td style="text-align:right"
+                      th:classappend="${pos}?' pnl-pos':' pnl-neg'"
+                      th:text="(${pos}?'+':'')+'₹'+${#numbers.formatDecimal(e.value,1,0)}"></td>
+                </tr>
+              </tbody>
+              <tbody th:if="${result.dailyPnl().isEmpty()}">
+                <tr><td colspan="3" style="color:#444;text-align:center;padding:20px">No trades</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div class="scrollable">
-          <table class="trade-log" style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Dir</th>
-                <th>Entry</th>
-                <th>SL</th>
-                <th>Target</th>
-                <th>Exit</th>
-                <th>Exit Why</th>
-                <th style="text-align:right">Gross</th>
-                <th style="text-align:right">Cost</th>
-                <th style="text-align:right">Net P&amp;L</th>
-                <th style="text-align:right">Running</th>
-              </tr>
-            </thead>
-            <tbody th:if="${!result.trades().isEmpty()}">
-              <tr th:each="t : ${result.trades()}"
-                  th:classappend="${t.win()} ? 'win-row' : 'loss-row'">
-                <td style="color:#444" th:text="${t.tradeNumber()}">1</td>
-                <td th:text="${t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')).toLocalDate()}">2024-01-01</td>
-                <td style="color:#555"
-                    th:text="${#temporals.format(t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')), 'HH:mm')}">09:30</td>
-                <td>
-                  <span class="dir-ce" th:if="${t.direction().contains('CE')}">CE&#8679;</span>
-                  <span class="dir-pe" th:if="${t.direction().contains('PE')}">PE&#8681;</span>
-                </td>
-                <td th:text="${t.entryPrice()}">0</td>
-                <td style="color:#ff6666" th:text="${t.stopLoss()}">0</td>
-                <td style="color:#66ff66" th:text="${t.target()}">0</td>
-                <td th:text="${t.exitPrice()}">0</td>
-                <td>
-                  <span class="exit-target" th:if="${t.exitReason() == 'TARGET'}">&#10003; TGT</span>
-                  <span class="exit-sl"     th:if="${t.exitReason() == 'STOP_LOSS'}">&#10007; SL</span>
-                  <span class="exit-time"   th:if="${t.exitReason() == 'TIME_EXIT'}">&#9201; TIME</span>
-                  <span style="color:#aaffaa;font-weight:bold" th:if="${t.exitReason() == 'TRAIL_STOP'}">&#8593; TRAIL</span>
-                </td>
-                <td style="text-align:right"
-                    th:classappend="${t.grossPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
-                    th:text="'₹' + ${#numbers.formatDecimal(t.grossPnl(), 1, 0)}">₹0</td>
-                <td style="text-align:right;color:#555"
-                    th:text="'₹' + ${#numbers.formatDecimal(t.costs(), 1, 0)}">₹0</td>
-                <td style="text-align:right;font-weight:bold"
-                    th:classappend="${t.netPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
-                    th:text="'₹' + ${#numbers.formatDecimal(t.netPnl(), 1, 0)}">₹0</td>
-                <td style="text-align:right;font-size:11px;color:#666"
-                    th:classappend="${t.runningPnl().compareTo(T(java.math.BigDecimal).ZERO) >= 0} ? ' pnl-pos' : ' pnl-neg'"
-                    th:text="'₹' + ${#numbers.formatDecimal(t.runningPnl(), 1, 0)}">₹0</td>
-              </tr>
-            </tbody>
-            <tbody th:if="${result.trades().isEmpty()}">
-              <tr><td colspan="13" style="color:#444;text-align:center;padding:20px">No trades generated</td></tr>
-            </tbody>
-          </table>
+
+        <div class="card">
+          <div class="section-title">Trade Log — every simulated trade</div>
+          <div class="scrollable">
+            <table class="trade-log" style="width:100%;border-collapse:collapse">
+              <thead><tr>
+                <th>#</th><th>Date</th><th>Time</th><th>Dir</th>
+                <th>Entry</th><th>SL</th><th>Target</th><th>Exit</th>
+                <th>Why</th><th style="text-align:right">Net</th><th style="text-align:right">Running</th>
+              </tr></thead>
+              <tbody th:if="${!result.trades().isEmpty()}">
+                <tr th:each="t:${result.trades()}" th:classappend="${t.win()}?'win-row':'loss-row'">
+                  <td style="color:#444" th:text="${t.tradeNumber()}"></td>
+                  <td th:text="${t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')).toLocalDate()}"></td>
+                  <td style="color:#555"
+                      th:text="${#temporals.format(t.entryTime().withZoneSameInstant(T(java.time.ZoneId).of('Asia/Kolkata')),'HH:mm')}"></td>
+                  <td>
+                    <span class="dir-ce" th:if="${t.direction().contains('CE')}">CE&#8679;</span>
+                    <span class="dir-pe" th:if="${t.direction().contains('PE')}">PE&#8681;</span>
+                  </td>
+                  <td th:text="${t.entryPrice()}"></td>
+                  <td style="color:#ff6666" th:text="${t.stopLoss()}"></td>
+                  <td style="color:#66ff66" th:text="${t.target()}"></td>
+                  <td th:text="${t.exitPrice()}"></td>
+                  <td>
+                    <span class="exit-target" th:if="${t.exitReason()=='TARGET'}">&#10003; TGT</span>
+                    <span class="exit-sl"     th:if="${t.exitReason()=='STOP_LOSS'}">&#10007; SL</span>
+                    <span class="exit-time"   th:if="${t.exitReason()=='TIME_EXIT'}">&#9201; TIME</span>
+                    <span class="exit-trail"  th:if="${t.exitReason()=='TRAIL_STOP'}">&#8593; TRAIL</span>
+                  </td>
+                  <td style="text-align:right;font-weight:bold"
+                      th:classappend="${t.netPnl().compareTo(T(java.math.BigDecimal).ZERO)>=0}?' pnl-pos':' pnl-neg'"
+                      th:text="'₹'+${#numbers.formatDecimal(t.netPnl(),1,0)}"></td>
+                  <td style="text-align:right;font-size:11px"
+                      th:classappend="${t.runningPnl().compareTo(T(java.math.BigDecimal).ZERO)>=0}?' pnl-pos':' pnl-neg'"
+                      th:text="'₹'+${#numbers.formatDecimal(t.runningPnl(),1,0)}"></td>
+                </tr>
+              </tbody>
+              <tbody th:if="${result.trades().isEmpty()}">
+                <tr><td colspan="11" style="color:#444;text-align:center;padding:20px">No trades</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-    </div><!-- end grid-2 -->
+      <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:10px 14px;
+                  font-size:11px;color:#555;display:flex;gap:20px;flex-wrap:wrap">
+        <span><span class="exit-target">&#10003; TGT</span> Target hit</span>
+        <span><span class="exit-sl">&#10007; SL</span> Stop-loss hit</span>
+        <span><span class="exit-trail">&#8593; TRAIL</span> Trailing stop (breakeven or profit locked)</span>
+        <span><span class="exit-time">&#9201; TIME</span> 25-bar time exit</span>
+        <span>Lot=75 · Slippage=0.02%/side</span>
+      </div>
+    </div><!-- end result -->
+  </div><!-- end tab-run -->
 
-    <!-- ── Legend ── -->
-    <div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:4px;padding:12px 16px;font-size:12px;color:#555;display:flex;gap:24px;flex-wrap:wrap">
-      <span><span class="exit-target">&#10003; TGT</span> = Price hit your target first — full win</span>
-      <span><span class="exit-sl">&#10007; SL</span> = Price hit stop-loss first — full loss</span>
-      <span><span class="exit-time">&#9201; TIME</span> = Neither hit within 25 bars → exited at bar-25 close</span>
-      <span><span style="color:#aaffaa;font-weight:bold">&#8593; TRAIL</span> = Trailing stop hit after price moved in your favor (breakeven or profit lock)</span>
-      <span><span class="dir-ce">CE&#8679;</span> = Bullish signal (Call Option)</span>
-      <span><span class="dir-pe">PE&#8681;</span> = Bearish signal (Put Option)</span>
-      <span>Lot size = 75 units &nbsp;|&nbsp; Slippage = 0.02% per side</span>
+  <!-- ══ TAB: History ══════════════════════════════════════════ -->
+  <div id="tab-history" class="tab-pane">
+    <div class="card">
+      <div class="section-title">All Backtest Runs — newest first</div>
+      <div class="scrollable" style="max-height:600px">
+        <table class="hist-table" style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th>When</th><th>Strategy</th><th>Period</th>
+            <th style="text-align:right">Trades</th>
+            <th style="text-align:right">Win%</th>
+            <th style="text-align:right">Net P&amp;L</th>
+            <th style="text-align:right">PF</th>
+            <th style="text-align:right">Expectancy</th>
+            <th>Type</th><th>Verdict</th>
+          </tr></thead>
+          <tbody th:if="${recentRuns != null and !recentRuns.isEmpty()}">
+            <tr th:each="r:${recentRuns}">
+              <td style="color:#555;font-size:11px"
+                  th:text="${#temporals.format(r.runAt,'MM-dd HH:mm')}"></td>
+              <td style="color:#ccc;font-size:12px" th:text="${r.strategyName}"></td>
+              <td style="color:#555;font-size:11px"
+                  th:text="${r.fromDate}+' – '+${r.toDate}"></td>
+              <td style="text-align:right" th:text="${r.totalTrades}"></td>
+              <td style="text-align:right"
+                  th:classappend="${r.winRate>0.6}?' pnl-pos':(${r.winRate>0.5}?' yellow':' pnl-neg')"
+                  th:text="${#numbers.formatDecimal(r.winRate*100,1,1)}+'%'"></td>
+              <td style="text-align:right"
+                  th:classappend="${r.totalNetPnl.compareTo(T(java.math.BigDecimal).ZERO)>=0}?' pnl-pos':' pnl-neg'"
+                  th:text="'₹'+${#numbers.formatDecimal(r.totalNetPnl,1,0)}"></td>
+              <td style="text-align:right"
+                  th:classappend="${r.profitFactor>1}?' pnl-pos':' pnl-neg'"
+                  th:text="${#numbers.formatDecimal(r.profitFactor,1,2)}"></td>
+              <td style="text-align:right"
+                  th:classappend="${r.expectancyPerTrade.compareTo(T(java.math.BigDecimal).ZERO)>=0}?' pnl-pos':' pnl-neg'"
+                  th:text="'₹'+${#numbers.formatDecimal(r.expectancyPerTrade,1,0)}"></td>
+              <td>
+                <span th:if="${r.optimized}" class="opt-badge opt-best" style="font-size:10px">&#9881; OPT</span>
+                <span th:if="${!r.optimized}" class="opt-badge opt-default" style="font-size:10px">MANUAL</span>
+              </td>
+              <td>
+                <span th:if="${r.promotable}" style="color:#00ff88;font-size:11px">&#10003; PROMOTABLE</span>
+                <span th:if="${!r.promotable}" style="color:#ff4444;font-size:11px">&#10007; REVIEW</span>
+              </td>
+            </tr>
+          </tbody>
+          <tbody th:if="${recentRuns==null or recentRuns.isEmpty()}">
+            <tr><td colspan="10" style="color:#444;text-align:center;padding:30px">
+              No backtest runs yet. Run a backtest to see history here.
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
+  </div>
 
-  </div><!-- end result block -->
+  <!-- ══ TAB: Import Data ══════════════════════════════════════ -->
+  <div id="tab-data" class="tab-pane">
+    <div class="card">
+      <div class="card-title">Fetch From Yahoo Finance</div>
+      <form method="post" th:action="@{/backtest/fetch-yahoo}"
+            style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <div class="form-group" style="margin:0"><label>Interval</label>
+          <select name="interval"><option value="5m" selected>5m</option><option value="15m">15m</option></select>
+        </div>
+        <div class="form-group" style="margin:0"><label>Range</label>
+          <select name="range">
+            <option value="5d">5 days</option><option value="1mo" selected>1 month</option>
+            <option value="3mo">3 months</option>
+          </select>
+        </div>
+        <input type="hidden" name="yahooSymbol" value="^NSEI"/>
+        <input type="hidden" name="symbol" value="NIFTY"/>
+        <button type="submit" class="btn btn-primary">Fetch into DB</button>
+        <a th:href="@{/backtest/download-yahoo-csv}" class="btn btn-primary" style="text-decoration:none">Download CSV</a>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-title">Import Historical CSV</div>
+      <div style="color:#555;font-size:12px;margin-bottom:10px">
+        Format: <code>timestamp,open,high,low,close,volume</code> — IST timestamps e.g. <code>2024-01-15 09:15:00</code>
+      </div>
+      <form method="post" th:action="@{/backtest/import-csv}" enctype="multipart/form-data"
+            style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <div class="form-group" style="margin:0"><label>CSV File</label>
+          <input type="file" name="file" accept=".csv" required/></div>
+        <div class="form-group" style="margin:0"><label>Symbol</label>
+          <input type="text" name="symbol" value="NIFTY" style="width:80px"/></div>
+        <div class="form-group" style="margin:0"><label>Timeframe</label>
+          <select name="timeframe"><option value="5m" selected>5m</option><option value="15m">15m</option></select>
+        </div>
+        <button type="submit" class="btn btn-primary">Import</button>
+      </form>
+    </div>
+  </div>
 
-</div>
+</div><!-- container -->
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+function submitTo(action) {
+  var f = document.getElementById('btForm');
+  f.action = action;
+  f.submit();
+}
+// Show history tab if no result yet and there are runs
+window.addEventListener('DOMContentLoaded', function() {
+  var hasResult = /*[[${result != null}]]*/ false;
+  if (!hasResult) {
+    var btn = document.querySelector('.tab-btn[onclick*="tab-history"]');
+    // stay on run tab
+  }
+});
+</script>
 </body>
 </html>

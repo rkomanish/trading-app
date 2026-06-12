@@ -11,104 +11,108 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-/**
- * VWAP + Bollinger Band mean-reversion — 5m candles.
- *
- * LONG_CE: price at lower BB + RSI oversold turning up + near/below VWAP
- * LONG_PE: price at upper BB + RSI overbought turning down + near/above VWAP
- *
- * Loss-control improvements:
- *   - Require 2 consecutive RSI bars turning (not just 1) — avoids catching
- *     a falling knife that just ticked up once
- *   - SL tightened: 1.5×ATR → 1.0×ATR
- *   - Target reduced: 2.5×ATR → 2.0×ATR (easier to reach, fewer TIME_EXIT losses)
- *   - ADX filter: skip if ADX > 30 (strong trend = mean reversion dangerous)
- *   - BB band touch must be real pierce (price < lower band, not just touching)
- */
 @Component
-public class VwapBollingerStrategy implements TradingStrategy {
+public class VwapBollingerStrategy implements TunableStrategy {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime START  = LocalTime.of(10, 0);  // avoid volatile open
-    private static final LocalTime CUTOFF = LocalTime.of(14, 30);
-    private static final int BB_PERIOD = 20;
-    private static final double BB_STDDEV = 2.0;
+    private static final LocalTime START = LocalTime.of(10, 0);
+    private static final LocalTime END   = LocalTime.of(14, 30);
+    private static final int BB_PERIOD = 20; private static final double BB_STD = 2.0;
     private static final int RSI_PERIOD = 14;
     private static final int MIN_CANDLES = BB_PERIOD + RSI_PERIOD + 10;
 
+    private final double slAtrMult;
+    private final double targetAtrMult;
+    private final double adxMax;
+    private final double rsiOversold;
+    private final double rsiOverbought;
+
+    public VwapBollingerStrategy() { this(1.0, 2.0, 40, 35, 65); }
+
+    private VwapBollingerStrategy(double slAtrMult, double targetAtrMult, double adxMax,
+                                   double rsiOversold, double rsiOverbought) {
+        this.slAtrMult = slAtrMult; this.targetAtrMult = targetAtrMult;
+        this.adxMax = adxMax; this.rsiOversold = rsiOversold; this.rsiOverbought = rsiOverbought;
+    }
+
+    @Override public String getName() { return "VWAP_BOLLINGER_REVERSION"; }
+
     @Override
-    public String getName() { return "VWAP_BOLLINGER_REVERSION"; }
+    public Map<String, Double> currentParams() {
+        return Map.of("slAtrMult", slAtrMult, "targetAtrMult", targetAtrMult, "adxMax", adxMax);
+    }
+
+    @Override
+    public Map<String, double[]> paramGrid() {
+        return Map.of(
+            "adxMax",        new double[]{35, 40, 45},
+            "slAtrMult",     new double[]{0.8, 1.0, 1.2},
+            "targetAtrMult", new double[]{1.8, 2.0, 2.5}
+        );
+    }
+
+    @Override
+    public TradingStrategy withParams(Map<String, Double> p) {
+        return new VwapBollingerStrategy(
+            p.getOrDefault("slAtrMult",     slAtrMult),
+            p.getOrDefault("targetAtrMult", targetAtrMult),
+            p.getOrDefault("adxMax",        adxMax),
+            rsiOversold, rsiOverbought
+        );
+    }
 
     @Override
     public Optional<Signal> evaluate(MarketContext ctx) {
         List<Candle> candles = ctx.candles5m();
         if (candles.size() < MIN_CANDLES) return Optional.empty();
-
-        LocalTime nowIst = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
-        if (nowIst.isBefore(START) || nowIst.isAfter(CUTOFF)) return Optional.empty();
-
-        // Skip during strong trends — mean reversion dangerous in trending markets
-        if (ctx.adx() > 30) return Optional.empty();
+        LocalTime t = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
+        if (t.isBefore(START) || t.isAfter(END)) return Optional.empty();
+        // ADX gate: allow mean reversion even in moderate-trend markets (up to adxMax)
+        // Only block extremely strong trends (e.g. ADX > 50 = runaway trend)
+        if (ctx.adx() > Math.max(adxMax, 50)) return Optional.empty();
 
         double[] closes = candles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
         double[] highs  = candles.stream().mapToDouble(c -> c.getHigh().doubleValue()).toArray();
         double[] lows   = candles.stream().mapToDouble(c -> c.getLow().doubleValue()).toArray();
         long[]   vols   = candles.stream().mapToLong(Candle::getVolume).toArray();
 
-        var bb     = IndicatorUtils.bollingerBandsLast(closes, BB_PERIOD, BB_STDDEV);
+        var bb = IndicatorUtils.bollingerBandsLast(closes, BB_PERIOD, BB_STD);
         double[] rsiArr = IndicatorUtils.rsi(closes, RSI_PERIOD);
-        int last   = closes.length - 1;
-        double rsiNow   = rsiArr[last];
-        double rsiPrev  = rsiArr[last - 1];
-        double rsiPrev2 = rsiArr[last - 2];
+        int last = closes.length - 1;
+        double rsiNow = rsiArr[last], rsiPrev = rsiArr[last-1], rsiPrev2 = rsiArr[last-2];
+        double vwap = IndicatorUtils.vwapLast(highs, lows, closes, vols);
+        double atr = ctx.currentAtr(), price = closes[last];
 
-        double vwap  = IndicatorUtils.vwapLast(highs, lows, closes, vols);
-        double atr   = ctx.currentAtr();
-        double price = closes[last];
-
-        // LONG_CE: real pierce of lower band + RSI turning up for 2 bars
-        boolean piercedLower   = price < bb.lower();
-        boolean rsiTurningUp2  = rsiNow < 38 && rsiNow > rsiPrev && rsiPrev > rsiPrev2;
-        boolean belowVwap      = price <= vwap + atr * 0.2;
-
-        if (piercedLower && rsiTurningUp2 && belowVwap) {
-            double sl     = price - atr * 1.0;  // tighter SL
-            double target = price + atr * 2.0;  // easier target
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, price, sl, target,
-                String.format("BB lower pierce %.0f RSI=%.1f↑↑ VWAP=%.0f ADX=%.1f",
-                    bb.lower(), rsiNow, vwap, ctx.adx())));
+        // Mean reversion: price at BB extreme + RSI extreme + single reversal bar
+        if (price < bb.lower() && rsiNow < rsiOversold && rsiNow > rsiPrev
+                && price <= vwap + atr * 0.5) {
+            double sl = price - atr * slAtrMult, tgt = price + atr * targetAtrMult;
+            if (tgt - price < (price - sl) * 1.5) return Optional.empty(); // enforce 1.5:1 R:R
+            return Optional.of(signal(ctx, SignalDirection.LONG_CE, price, sl, tgt,
+                String.format("BB lower RSI=%.1f↑ ADX=%.1f", rsiNow, ctx.adx())));
         }
-
-        // LONG_PE: real pierce of upper band + RSI turning down for 2 bars
-        boolean piercedUpper    = price > bb.upper();
-        boolean rsiTurningDown2 = rsiNow > 62 && rsiNow < rsiPrev && rsiPrev < rsiPrev2;
-        boolean aboveVwap       = price >= vwap - atr * 0.2;
-
-        if (piercedUpper && rsiTurningDown2 && aboveVwap) {
-            double sl     = price + atr * 1.0;
-            double target = price - atr * 2.0;
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, price, sl, target,
-                String.format("BB upper pierce %.0f RSI=%.1f↓↓ VWAP=%.0f ADX=%.1f",
-                    bb.upper(), rsiNow, vwap, ctx.adx())));
+        if (price > bb.upper() && rsiNow > rsiOverbought && rsiNow < rsiPrev
+                && price >= vwap - atr * 0.5) {
+            double sl = price + atr * slAtrMult, tgt = price - atr * targetAtrMult;
+            if (price - tgt < (sl - price) * 1.5) return Optional.empty();
+            return Optional.of(signal(ctx, SignalDirection.LONG_PE, price, sl, tgt,
+                String.format("BB upper RSI=%.1f↓ ADX=%.1f", rsiNow, ctx.adx())));
         }
-
         return Optional.empty();
     }
 
-    private Signal buildSignal(MarketContext ctx, SignalDirection dir, double entry,
-                                double sl, double target, String reason) {
+    private Signal signal(MarketContext ctx, SignalDirection dir, double price,
+                           double sl, double target, String reason) {
         Signal s = new Signal();
-        s.setGeneratedAt(ZonedDateTime.now());
-        s.setStrategyName(getName());
-        s.setSymbol(ctx.symbol());
-        s.setDirection(dir);
-        s.setSuggestedEntry(BigDecimal.valueOf(entry));
+        s.setGeneratedAt(ZonedDateTime.now()); s.setStrategyName(getName());
+        s.setSymbol(ctx.symbol()); s.setDirection(dir);
+        s.setSuggestedEntry(BigDecimal.valueOf(price));
         s.setSuggestedStopLoss(BigDecimal.valueOf(sl));
         s.setSuggestedTarget(BigDecimal.valueOf(target));
-        s.setLots(1);
-        s.setReasoning(reason);
+        s.setLots(1); s.setReasoning(reason);
         return s;
     }
 }
