@@ -11,6 +11,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -64,21 +65,37 @@ public class YahooFinanceService {
      */
     public FetchResult fetchAndStore(String yahooSymbol, String appSymbol,
                                       String interval, String range) {
-        List<Candle> candles;
-        try {
-            candles = fetch(yahooSymbol, appSymbol, interval, range);
-        } catch (Exception e) {
-            log.error("Yahoo fetch failed: {}", e.getMessage());
-            return new FetchResult(0, 0, 0, "Yahoo fetch failed: " + e.getMessage());
+        List<Candle> candles = null;
+        Exception lastError = null;
+        // Retry up to 3 times with 2s backoff; on reset errors also swap to query2
+        String[] hosts = {"https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"};
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                String host = hosts[attempt % hosts.length];
+                candles = fetchFromHost(host, yahooSymbol, appSymbol, interval, range);
+                lastError = null;
+                break;
+            } catch (Exception e) {
+                lastError = e;
+                log.warn("Yahoo fetch attempt {} failed: {} — retrying", attempt + 1, e.getMessage());
+                if (attempt < 2) {
+                    try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                }
+            }
+        }
+        if (candles == null) {
+            log.error("Yahoo fetch failed after 3 attempts: {}", lastError != null ? lastError.getMessage() : "unknown");
+            return new FetchResult(0, 0, 0, "Yahoo fetch failed: " + (lastError != null ? lastError.getMessage() : "unknown"));
         }
 
         int saved = 0, duplicates = 0;
         for (Candle c : candles) {
-            try {
+            if (candleRepo.existsBySymbolAndTimeframeAndOpenTime(
+                    c.getSymbol(), c.getTimeframe(), c.getOpenTime())) {
+                duplicates++;
+            } else {
                 candleRepo.save(c);
                 saved++;
-            } catch (Exception e) {
-                duplicates++; // unique constraint = candle already imported
             }
         }
         log.info("Yahoo import: {} fetched, {} saved, {} duplicates for {} [{}]",
@@ -89,7 +106,7 @@ public class YahooFinanceService {
     /** Fetch candles and render them as CSV in our standard import format. */
     public String fetchAsCsv(String yahooSymbol, String appSymbol,
                               String interval, String range) throws Exception {
-        List<Candle> candles = fetch(yahooSymbol, appSymbol, interval, range);
+        List<Candle> candles = fetchFromHost("https://query1.finance.yahoo.com", yahooSymbol, appSymbol, interval, range);
         StringBuilder sb = new StringBuilder("timestamp,open,high,low,close,volume\n");
         for (Candle c : candles) {
             sb.append(c.getOpenTime().format(CSV_TS)).append(',')
@@ -102,15 +119,17 @@ public class YahooFinanceService {
         return sb.toString();
     }
 
-    private List<Candle> fetch(String yahooSymbol, String appSymbol,
-                                String interval, String range) throws Exception {
-        String body = yahooClient.get()
+    private List<Candle> fetchFromHost(String host, String yahooSymbol, String appSymbol,
+                                        String interval, String range) throws Exception {
+        WebClient client = yahooClient.mutate().baseUrl(host).build();
+        String body = client.get()
             .uri(uri -> uri.path("/v8/finance/chart/{symbol}")
                 .queryParam("interval", interval)
                 .queryParam("range", range)
                 .build(yahooSymbol))
             .retrieve()
             .bodyToMono(String.class)
+            .timeout(Duration.ofSeconds(10))
             .block();
 
         JsonNode root = objectMapper.readTree(body);

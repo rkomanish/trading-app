@@ -137,17 +137,21 @@ public class StrategyEngine {
     }
 
     private MarketContext buildContext(String symbol) {
-        ZonedDateTime cutoff = ZonedDateTime.now(IST).minusHours(2);
+        // Pull 3 calendar days back so indicator warmup (30+ bars) works from market open.
+        // On Mondays this covers Friday's session; mid-week it covers the prior day.
+        ZonedDateTime since5m  = ZonedDateTime.now(IST).minusDays(3);
+        ZonedDateTime since15m = ZonedDateTime.now(IST).minusDays(5);
+        ZonedDateTime since1m  = ZonedDateTime.now(IST).minusHours(2);
 
         List<Candle> c1m  = candleRepo
-            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "1m", cutoff);
+            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "1m", since1m);
         List<Candle> c5m  = candleRepo
-            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "5m", cutoff.minusHours(4));
+            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "5m", since5m);
         List<Candle> c15m = candleRepo
-            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "15m", cutoff.minusHours(6));
+            .findBySymbolAndTimeframeAndOpenTimeAfterOrderByOpenTimeAsc(symbol, "15m", since15m);
 
         if (c5m.size() < 30) {
-            log.debug("Not enough 5m candles ({}) for strategy evaluation", c5m.size());
+            log.warn("Not enough 5m candles ({}) for strategy evaluation — waiting for more data", c5m.size());
             return null;
         }
 
