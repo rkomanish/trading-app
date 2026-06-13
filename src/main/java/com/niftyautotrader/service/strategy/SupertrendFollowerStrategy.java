@@ -22,7 +22,7 @@ public class SupertrendFollowerStrategy implements TunableStrategy {
     private final double adxMin;
     private final double slAtrCap;
 
-    public SupertrendFollowerStrategy() { this(7, 2.0, 20, 0.8); }
+    public SupertrendFollowerStrategy() { this(7, 2.0, 20, 0.4); }
 
     private SupertrendFollowerStrategy(int stPeriod, double stMult, double adxMin, double slAtrCap) {
         this.stPeriod = stPeriod; this.stMult = stMult;
@@ -42,7 +42,7 @@ public class SupertrendFollowerStrategy implements TunableStrategy {
         return Map.of(
             "adxMin",   new double[]{15, 20, 25},
             "stMult",   new double[]{1.5, 2.0, 2.5},
-            "slAtrCap", new double[]{0.6, 0.8, 1.0}
+            "slAtrCap", new double[]{0.3, 0.4, 0.5}
         );
     }
 

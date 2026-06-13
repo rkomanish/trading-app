@@ -30,7 +30,7 @@ public class BollingerSqueezeStrategy implements TunableStrategy {
     private final double targetAtrMult;
     private final double volMult;
 
-    public BollingerSqueezeStrategy() { this(15, 1.0, 2.0, 1.2); }
+    public BollingerSqueezeStrategy() { this(15, 0.5, 2.0, 1.2); }
 
     private BollingerSqueezeStrategy(double adxMin, double slAtrCap, double targetAtrMult, double volMult) {
         this.adxMin = adxMin; this.slAtrCap = slAtrCap;
@@ -49,7 +49,7 @@ public class BollingerSqueezeStrategy implements TunableStrategy {
     public Map<String, double[]> paramGrid() {
         return Map.of(
             "adxMin",        new double[]{12, 15, 18},
-            "slAtrCap",      new double[]{0.8, 1.0, 1.2},
+            "slAtrCap",      new double[]{0.3, 0.4, 0.5},
             "targetAtrMult", new double[]{1.8, 2.0, 2.5}
         );
     }

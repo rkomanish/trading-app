@@ -26,10 +26,10 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
     private final double slAtrCap;
     private final double volMult;
 
-    // Default params = optimizer best: maxOrbAtrMult=2.5, slAtrCap=1.2, volMult=1.2
-    // Achieved PF 9.00, 54.5% win rate, ₹2332/trade, MaxDD ₹4790 in 90-day backtest
+    // Tighter SL: 0.5×ATR ≈ 25 pts = ₹1,875 max loss per lot (75 units × 25 pts)
+    // Target = 2× risk = ₹3,750. Capital per trade: ~₹15,000–₹25,000 (ATM option premium × 75)
     public OpeningRangeBreakoutStrategy() {
-        this(LocalTime.of(11, 0), 2.5, 1.2, 1.2);
+        this(LocalTime.of(11, 0), 2.5, 0.5, 1.2);
     }
 
     private OpeningRangeBreakoutStrategy(LocalTime entryCutoff, double maxOrbAtrMult,
@@ -49,7 +49,7 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
     public Map<String, double[]> paramGrid() {
         return Map.of(
             "maxOrbAtrMult", new double[]{1.5, 2.0, 2.5},
-            "slAtrCap",      new double[]{0.8, 1.0, 1.2},
+            "slAtrCap",      new double[]{0.3, 0.4, 0.5},
             "volMult",       new double[]{1.2, 1.5, 2.0}
         );
     }

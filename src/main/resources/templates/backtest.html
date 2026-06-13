@@ -181,6 +181,51 @@
         </div>
       </div>
 
+      <!-- ── Position Sizing & Capital Info ── -->
+      <div style="background:#0b1a0b;border:1px solid #1a3a1a;border-radius:6px;
+                  padding:14px 18px;margin-bottom:16px;font-size:13px;line-height:1.8">
+        <div style="color:#00cc66;font-weight:600;margin-bottom:8px">
+          &#128181; Position Sizing — 1 Lot Nifty (75 units)
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;color:#bbb">
+          <div>
+            <span style="color:#888">Max loss / trade:</span>&nbsp;
+            <strong style="color:#ff6666"
+              th:text="'₹' + ${#numbers.formatDecimal(result.avgLoss(),1,0)}">₹0</strong>
+            &nbsp;<span style="color:#555;font-size:11px">(avg SL hit)</span>
+          </div>
+          <div>
+            <span style="color:#888">Avg win / trade:</span>&nbsp;
+            <strong style="color:#00cc66"
+              th:text="'₹' + ${#numbers.formatDecimal(result.avgWin(),1,0)}">₹0</strong>
+          </div>
+          <div>
+            <span style="color:#888">Capital per trade:</span>&nbsp;
+            <strong style="color:#fff">₹15,000 – ₹25,000</strong>
+            &nbsp;<span style="color:#555;font-size:11px">(ATM option premium × 75)</span>
+          </div>
+          <div>
+            <span style="color:#888">Recommended capital:</span>&nbsp;
+            <strong style="color:#fff">₹1,00,000+</strong>
+            &nbsp;<span style="color:#555;font-size:11px">(for 4–5 concurrent positions)</span>
+          </div>
+          <div>
+            <span style="color:#888">Risk per trade (1%):</span>&nbsp;
+            <strong style="color:#ffcc00">₹1,000</strong>
+            &nbsp;<span style="color:#555;font-size:11px">(on ₹1L capital)</span>
+          </div>
+          <div>
+            <span style="color:#888">1 pt Nifty move =</span>&nbsp;
+            <strong style="color:#fff">₹75</strong>
+            &nbsp;<span style="color:#555;font-size:11px">per lot (lot size: 75)</span>
+          </div>
+        </div>
+        <div style="margin-top:10px;color:#666;font-size:11px;border-top:1px solid #1a2a1a;padding-top:8px">
+          ⚠ SL is set at ~0.4–0.5× ATR ≈ 20–25 Nifty points = ₹1,500–₹1,875 max loss per lot.
+          Start paper trading with 1 lot only. Scale only after 20+ winning paper trades.
+        </div>
+      </div>
+
       <!-- ── Claude AI Enhancement Panel ── -->
       <div th:if="${enhancement != null}" class="claude-panel">
         <div class="claude-title">&#x1F916; Claude AI Strategy Enhancement — <span th:text="${enhancement.strategyName()}"></span></div>

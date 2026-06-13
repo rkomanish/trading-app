@@ -31,7 +31,7 @@ public class EmaCrossoverStrategy implements TunableStrategy {
     private final double rsiHi;
 
     public EmaCrossoverStrategy() {
-        this(18, 0.8, 1.8, 40, 75);
+        this(18, 0.4, 1.8, 40, 75);
     }
 
     private EmaCrossoverStrategy(double adxMin, double slAtrMult, double targetAtrMult,
@@ -52,7 +52,7 @@ public class EmaCrossoverStrategy implements TunableStrategy {
     public Map<String, double[]> paramGrid() {
         return Map.of(
             "adxMin",        new double[]{15, 18, 22},
-            "slAtrMult",     new double[]{0.6, 0.8, 1.0},
+            "slAtrMult",     new double[]{0.3, 0.4, 0.5},
             "targetAtrMult", new double[]{1.5, 1.8, 2.2}
         );
     }

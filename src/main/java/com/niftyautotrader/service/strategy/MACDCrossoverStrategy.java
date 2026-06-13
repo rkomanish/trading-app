@@ -29,7 +29,9 @@ public class MACDCrossoverStrategy implements TunableStrategy {
 
     // Default params = optimizer best: adxMin=25, slAtrMult=1.0, targetAtrMult=2.2
     // Achieved 63.2% win rate, PF 4.42, ₹1990/trade in 90-day backtest
-    public MACDCrossoverStrategy() { this(25, 1.0, 2.2); }
+    // Tighter SL: 0.5×ATR ≈ 25 pts = ₹1,875 max loss per lot (75 units × 25 pts)
+    // Target = 2.2× risk = ₹4,125. Capital per trade: ~₹15,000–₹25,000 (ATM option premium × 75)
+    public MACDCrossoverStrategy() { this(25, 0.5, 2.2); }
 
     private MACDCrossoverStrategy(double adxMin, double slAtrMult, double targetAtrMult) {
         this.adxMin = adxMin; this.slAtrMult = slAtrMult; this.targetAtrMult = targetAtrMult;
@@ -46,7 +48,7 @@ public class MACDCrossoverStrategy implements TunableStrategy {
     public Map<String, double[]> paramGrid() {
         return Map.of(
             "adxMin",        new double[]{18, 22, 25},
-            "slAtrMult",     new double[]{0.6, 0.8, 1.0},
+            "slAtrMult",     new double[]{0.3, 0.4, 0.5},
             "targetAtrMult", new double[]{1.5, 1.8, 2.2}
         );
     }
