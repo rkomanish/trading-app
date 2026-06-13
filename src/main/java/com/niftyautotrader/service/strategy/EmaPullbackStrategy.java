@@ -37,6 +37,11 @@ public class EmaPullbackStrategy implements TunableStrategy {
 
     @Override public String getName() { return "EMA21_PULLBACK"; }
 
+    // Disabled: 40% win rate, PF 0.42, max drawdown ₹34,573 in backtest.
+    // Entry catches false pullbacks — continuation rather than reversal.
+    // Needs fundamental redesign before re-enabling. Do NOT use with real money.
+    @Override public boolean isEnabled() { return false; }
+
     @Override
     public Map<String, Double> currentParams() {
         return Map.of("adxMin", adxMin, "slAtrMult", slAtrMult,

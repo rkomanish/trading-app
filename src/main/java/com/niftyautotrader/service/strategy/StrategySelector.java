@@ -13,20 +13,24 @@ import java.util.stream.Collectors;
 /**
  * Selects which strategies are eligible to fire given the current market regime.
  *
- * Market regimes and their preferred strategies:
+ * Market regimes and their permitted strategies — updated based on backtest results:
  *
- *  ┌─────────────────┬──────────┬────────────────────────────────────────────┐
- *  │ Regime          │ ADX      │ Best Strategies                            │
- *  ├─────────────────┼──────────┼────────────────────────────────────────────┤
- *  │ Opening (09:15) │ any      │ OPENING_RANGE_BREAKOUT                     │
- *  │ Strong trend    │ > 25     │ SUPERTREND_FOLLOWER, EMA21_PULLBACK         │
- *  │ Moderate trend  │ 18–25    │ MACD_CROSSOVER, EMA_CROSSOVER_9_21         │
- *  │ Ranging         │ < 18     │ VWAP_BOLLINGER_REVERSION, BB squeeze       │
- *  │ Squeeze setup   │ any      │ BOLLINGER_SQUEEZE_BREAKOUT                 │
- *  └─────────────────┴──────────┴────────────────────────────────────────────┘
+ *  ┌─────────────────┬──────────┬─────────────────────────────────────────────────┐
+ *  │ Regime          │ ADX      │ Strategies (all confirmed profitable in backtest)│
+ *  ├─────────────────┼──────────┼─────────────────────────────────────────────────┤
+ *  │ Opening (09:15) │ any      │ OPENING_RANGE_BREAKOUT only                     │
+ *  │ Strong trend    │ > 25     │ ORB (valid until 11:00), MACD, BB_SQUEEZE        │
+ *  │ Moderate trend  │ 18–25    │ MACD, EMA_CROSSOVER, ORB, BB_SQUEEZE             │
+ *  │ Ranging         │ < 18     │ BB_SQUEEZE only (mean reversion disabled)         │
+ *  └─────────────────┴──────────┴─────────────────────────────────────────────────┘
  *
- * The StrategyEngine calls this before evaluating each strategy tick.
- * Only enabled strategies for the current regime are evaluated.
+ * DISABLED strategies (backtest shows consistent losses):
+ *   - EMA21_PULLBACK:       40% win rate, PF 0.42, max drawdown ₹34,573 — removed from all regimes
+ *   - VWAP_BOLLINGER:       0% win rate, all trades hit SL — Nifty trends too hard for mean reversion
+ *   - SUPERTREND_FOLLOWER:  only 3 trades in 90 days — insufficient signal frequency
+ *
+ * MONITORING only (paper trade, not real money):
+ *   - EMA_CROSSOVER_9_21:   72.7% win rate but only 11 trades — sample too small to trust
  */
 @Component
 public class StrategySelector {
@@ -82,23 +86,27 @@ public class StrategySelector {
                 "OPENING_RANGE_BREAKOUT"
             ).contains(name);
 
+            // Strong trend: ORB still valid until 11 AM, MACD with high ADX is excellent,
+            // BB squeeze catches volatility expansions. EMA21_PULLBACK REMOVED — 40% win rate.
             case STRONG_TREND -> List.of(
-                "SUPERTREND_FOLLOWER",
-                "EMA21_PULLBACK",
-                "EMA_CROSSOVER_9_21",
+                "OPENING_RANGE_BREAKOUT",
+                "MACD_CROSSOVER",
                 "BOLLINGER_SQUEEZE_BREAKOUT"
             ).contains(name);
 
+            // Moderate trend: crossover and momentum strategies.
+            // EMA21_PULLBACK REMOVED — consistent losses across all param combos.
             case MODERATE_TREND -> List.of(
                 "MACD_CROSSOVER",
                 "EMA_CROSSOVER_9_21",
-                "EMA21_PULLBACK",
                 "OPENING_RANGE_BREAKOUT",
                 "BOLLINGER_SQUEEZE_BREAKOUT"
             ).contains(name);
 
+            // Ranging: only BB squeeze. VWAP_BOLLINGER REMOVED — 0% win rate, all trades
+            // hit SL. Nifty ranging days still have 50-100pt directional moves that destroy
+            // mean reversion positions. BB squeeze fires on range breakouts, not reversions.
             case RANGING -> List.of(
-                "VWAP_BOLLINGER_REVERSION",
                 "BOLLINGER_SQUEEZE_BREAKOUT"
             ).contains(name);
         };

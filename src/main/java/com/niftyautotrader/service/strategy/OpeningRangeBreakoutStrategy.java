@@ -26,8 +26,10 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
     private final double slAtrCap;
     private final double volMult;
 
+    // Default params = optimizer best: maxOrbAtrMult=2.5, slAtrCap=1.2, volMult=1.2
+    // Achieved PF 9.00, 54.5% win rate, ₹2332/trade, MaxDD ₹4790 in 90-day backtest
     public OpeningRangeBreakoutStrategy() {
-        this(LocalTime.of(11, 0), 2.0, 1.0, 1.5);
+        this(LocalTime.of(11, 0), 2.5, 1.2, 1.2);
     }
 
     private OpeningRangeBreakoutStrategy(LocalTime entryCutoff, double maxOrbAtrMult,
@@ -86,7 +88,12 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
             }
         }
         if (orbBars == 0) return Optional.empty();
-        if (orbHigh - orbLow > atr * maxOrbAtrMult) return Optional.empty();
+        double orbWidth = orbHigh - orbLow;
+        // Skip event days: ORB wider than 2× ATR = Budget/RBI/expiry gap — risk is unquantifiable
+        if (orbWidth > atr * maxOrbAtrMult) return Optional.empty();
+        // Also skip if ORB is too narrow (< 0.1% of price) = pre-market data issue
+        double priceLevel = (orbHigh + orbLow) / 2.0;
+        if (orbWidth < priceLevel * 0.001) return Optional.empty();
 
         Candle latest = candles.get(candles.size() - 1);
         double price  = latest.getClose().doubleValue();

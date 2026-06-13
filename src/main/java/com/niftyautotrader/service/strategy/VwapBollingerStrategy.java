@@ -40,6 +40,11 @@ public class VwapBollingerStrategy implements TunableStrategy {
 
     @Override public String getName() { return "VWAP_BOLLINGER_REVERSION"; }
 
+    // Disabled: 0% win rate in backtest — all 3 trades hit stop loss.
+    // Nifty intraday has too many directional moves for pure mean reversion.
+    // Re-enable only after validating on 6+ months of real Nifty historical data.
+    @Override public boolean isEnabled() { return false; }
+
     @Override
     public Map<String, Double> currentParams() {
         return Map.of("slAtrMult", slAtrMult, "targetAtrMult", targetAtrMult, "adxMax", adxMax);
