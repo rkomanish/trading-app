@@ -16,12 +16,12 @@ import java.util.stream.Collectors;
  * Market regimes and their permitted strategies — updated based on backtest results:
  *
  *  ┌─────────────────┬──────────┬─────────────────────────────────────────────────┐
- *  │ Regime          │ ADX      │ Strategies (all confirmed profitable in backtest)│
+ *  │ Regime          │ ADX      │ Strategies                                      │
  *  ├─────────────────┼──────────┼─────────────────────────────────────────────────┤
- *  │ Opening (09:15) │ any      │ OPENING_RANGE_BREAKOUT only                     │
- *  │ Strong trend    │ > 25     │ ORB (valid until 11:00), MACD, BB_SQUEEZE        │
- *  │ Moderate trend  │ 18–25    │ MACD, EMA_CROSSOVER, ORB, BB_SQUEEZE             │
- *  │ Ranging         │ < 18     │ BB_SQUEEZE only (mean reversion disabled)         │
+ *  │ Opening (09:15) │ any      │ OPENING_RANGE_BREAKOUT, GAP_MOMENTUM, PDH_PDL   │
+ *  │ Strong trend    │ > 25     │ PDH_PDL, MACD, BB_SQUEEZE, GAP_MOMENTUM         │
+ *  │ Moderate trend  │ 18–25    │ PDH_PDL, MACD, EMA_CROSSOVER, BB_SQUEEZE        │
+ *  │ Ranging         │ < 18     │ PDH_PDL, BB_SQUEEZE                             │
  *  └─────────────────┴──────────┴─────────────────────────────────────────────────┘
  *
  * DISABLED strategies (backtest shows consistent losses):
@@ -82,31 +82,37 @@ public class StrategySelector {
 
     private boolean isAppropriate(String name, MarketRegime regime) {
         return switch (regime) {
+            // At open: ORB captures 9:15-9:30 range, Gap momentum captures overnight gap,
+            // PDH/PDL levels are immediately tested at open — all 3 fire in first 30 min.
             case OPENING -> List.of(
-                "OPENING_RANGE_BREAKOUT"
-            ).contains(name);
-
-            // Strong trend: ORB still valid until 11 AM, MACD with high ADX is excellent,
-            // BB squeeze catches volatility expansions. EMA21_PULLBACK REMOVED — 40% win rate.
-            case STRONG_TREND -> List.of(
                 "OPENING_RANGE_BREAKOUT",
-                "MACD_CROSSOVER",
-                "BOLLINGER_SQUEEZE_BREAKOUT"
+                "GAP_MOMENTUM",
+                "PDH_PDL_BREAKOUT"
             ).contains(name);
 
-            // Moderate trend: crossover and momentum strategies.
-            // EMA21_PULLBACK REMOVED — consistent losses across all param combos.
+            // Strong trend: PDH/PDL breakouts accelerate in trending days.
+            // MACD strong signal in high-ADX regime. BB squeeze catches volatility bursts.
+            // Gap momentum still valid until 11:30.
+            case STRONG_TREND -> List.of(
+                "PDH_PDL_BREAKOUT",
+                "MACD_CROSSOVER",
+                "BOLLINGER_SQUEEZE_BREAKOUT",
+                "GAP_MOMENTUM"
+            ).contains(name);
+
+            // Moderate trend: PDH/PDL works in all regimes (institutional levels).
+            // MACD and EMA crossovers work in moderate trends.
             case MODERATE_TREND -> List.of(
+                "PDH_PDL_BREAKOUT",
                 "MACD_CROSSOVER",
                 "EMA_CROSSOVER_9_21",
-                "OPENING_RANGE_BREAKOUT",
                 "BOLLINGER_SQUEEZE_BREAKOUT"
             ).contains(name);
 
-            // Ranging: only BB squeeze. VWAP_BOLLINGER REMOVED — 0% win rate, all trades
-            // hit SL. Nifty ranging days still have 50-100pt directional moves that destroy
-            // mean reversion positions. BB squeeze fires on range breakouts, not reversions.
+            // Ranging: PDH/PDL still fires on breakouts even in ranging days.
+            // BB squeeze catches the eventual volatility expansion.
             case RANGING -> List.of(
+                "PDH_PDL_BREAKOUT",
                 "BOLLINGER_SQUEEZE_BREAKOUT"
             ).contains(name);
         };

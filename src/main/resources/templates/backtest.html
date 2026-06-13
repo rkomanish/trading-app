@@ -69,6 +69,31 @@
         <strong>Optimize Parameters</strong> runs 27 combinations and picks the best.
         <strong>Ask Claude</strong> runs optimizer first then sends results to Claude AI for suggestions.
       </div>
+
+      <!-- How backtest works — collapsed by default -->
+      <details style="margin-bottom:14px;border:1px solid #1a1a1a;border-radius:4px;padding:10px">
+        <summary style="color:#4499ff;cursor:pointer;font-size:12px;font-weight:600">
+          &#8505; How does the backtest work? (click to expand)
+        </summary>
+        <div style="color:#777;font-size:12px;margin-top:10px;line-height:1.8">
+          <strong style="color:#aaa">Step-by-step:</strong><br>
+          1. Loads your real 5m Nifty candles from the database for the date range you enter.<br>
+          2. Splits them into N windows (e.g. 4 windows of equal length).<br>
+          3. In each window: replays every candle one-by-one as if it's live — asks the strategy "do you want to trade?"<br>
+          4. If yes: enters at next bar's open price, exits when SL / target / time-limit (25 bars ≈ 2 hours) is hit.<br>
+          5. P&amp;L = (exit − entry) × 75 (1 lot Nifty = 75 units, each 1 Nifty point = ₹75).<br>
+          6. A strategy is <strong style="color:#00cc66">PROMOTABLE</strong> if it shows positive expectancy in the majority of windows.<br>
+          <br>
+          <strong style="color:#ffcc00">⚠ Data requirement:</strong>
+          Need at least <strong>60 trading days</strong> for reliable results.
+          With less data, use Windows = 2 (not 4). To import more: go to <strong>Import Data</strong> tab → Symbol: ^NSEI, Interval: 5m, Period: 60d.<br>
+          <br>
+          <strong style="color:#aaa">New strategies to test:</strong>
+          <strong style="color:#00cc66">PDH_PDL_BREAKOUT</strong> (Previous Day High/Low) and
+          <strong style="color:#00cc66">GAP_MOMENTUM</strong> (overnight gap continuation) —
+          both are proven Nifty-specific setups designed around how Indian institutions trade.
+        </div>
+      </details>
       <form id="btForm" method="post" th:action="@{/backtest/run}">
         <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
@@ -113,6 +138,16 @@
 
       <div th:class="${result.promotable()} ? 'alert alert-success' : 'alert alert-danger'"
            th:text="${result.verdict()}"></div>
+
+      <!-- Data shortage warning -->
+      <div th:if="${result.tradingDaysWithData() < 40}"
+           style="background:#1a1100;border:1px solid #554400;border-radius:4px;
+                  padding:10px 14px;margin-bottom:12px;font-size:12px;color:#ffaa00">
+        ⚠ <strong>Only <span th:text="${result.tradingDaysWithData()}"></span> trading days</strong>
+        — results are not statistically reliable. Need 60+ days minimum.
+        Go to <strong>Import Data</strong> tab → import ^NSEI 5m 60d first.
+        Then re-run with Windows = 2.
+      </div>
 
       <!-- data range bar -->
       <div style="color:#555;font-size:12px;margin-bottom:16px;background:#0d0d0d;

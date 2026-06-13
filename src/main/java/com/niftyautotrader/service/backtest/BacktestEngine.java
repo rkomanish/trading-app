@@ -53,16 +53,28 @@ public class BacktestEngine {
                                           List<Candle> allCandles5m,
                                           int windowCount) {
         if (allCandles5m.size() < 100) {
-            return emptyResult(strategy.getName(), allCandles5m, "Insufficient data (< 100 candles)");
+            return emptyResult(strategy.getName(), allCandles5m, "Insufficient data (< 100 candles). Import at least 60 days via Backtest → Import Data.");
         }
 
-        int windowSize = allCandles5m.size() / windowCount;
+        // Auto-reduce windows when data is short — each window needs at least 300 bars
+        // (40 warmup + meaningful evaluation). With 6 days × 75 bars = 450 bars minimum per window.
+        int effectiveWindows = windowCount;
+        while (effectiveWindows > 1 && allCandles5m.size() / effectiveWindows < 450) {
+            effectiveWindows--;
+        }
+        if (effectiveWindows < windowCount) {
+            log.warn("Reduced walk-forward windows from {} to {} — only {} candles available (need {}+ per window).",
+                windowCount, effectiveWindows, allCandles5m.size(), windowCount * 450);
+        }
+
+        int windowSize = allCandles5m.size() / effectiveWindows;
+        int actualWindows = effectiveWindows;
         List<BigDecimal> allWindowExpectancies = new ArrayList<>();
         List<RawTrade> allRawTrades = new ArrayList<>();
         List<BigDecimal> equityCurve = new ArrayList<>();
         equityCurve.add(BigDecimal.ZERO);
 
-        for (int w = 0; w < windowCount; w++) {
+        for (int w = 0; w < actualWindows; w++) {
             int start = w * windowSize;
             int end = Math.min(start + windowSize, allCandles5m.size());
             List<Candle> window = allCandles5m.subList(start, end);
