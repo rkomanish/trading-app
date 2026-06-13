@@ -136,16 +136,18 @@ public class BacktestEngine {
                 double target = signal.getSuggestedTarget() != null
                     ? signal.getSuggestedTarget().doubleValue() : entry * 1.3;
 
-                // Time-exit default at bar i+25 (reduced from 40 — less drift time)
-                int maxBars = 25;
+                // Time-exit: up to 50 bars (≈4 hours) to reach target.
+                // 25 bars was cutting winners too early → PF < 1 despite 59% win rates.
+                int maxBars = 50;
                 int timeExitBar = Math.min(i + maxBars, candles.size() - 1);
                 double exitPrice = candles.get(timeExitBar).getClose().doubleValue();
                 String exitReason = "TIME_EXIT";
                 ZonedDateTime exitTime = candles.get(timeExitBar).getOpenTime();
 
-                // Trailing stop: track dynamic SL that moves to protect profit
+                // Trailing stop: aggressive early lock-in to protect small profits
                 double trailSl       = sl;
                 double initialRisk   = Math.abs(entry - sl);
+                boolean halfRiskSet  = false; // trail at 0.5× risk gain
                 boolean breakEvenSet = false;
 
                 for (int j = i + 1; j < Math.min(i + maxBars, candles.size()); j++) {
@@ -154,21 +156,25 @@ public class BacktestEngine {
                     double barLow  = bar.getLow().doubleValue();
 
                     if (isBull) {
-                        // Trailing stop logic for LONG_CE
                         double favorMove = barHigh - entry;
+                        // At 0.5×risk gain → lock in 0.2×risk profit (early protection)
+                        if (!halfRiskSet && favorMove >= initialRisk * 0.5) {
+                            trailSl = entry + initialRisk * 0.2;
+                            halfRiskSet = true;
+                        }
+                        // At 1×risk gain → move SL to breakeven
                         if (!breakEvenSet && favorMove >= initialRisk) {
-                            // Price moved 1×risk in favor → move SL to breakeven
-                            trailSl = entry + SLIPPAGE * entry; // tiny buffer above entry
+                            trailSl = entry + SLIPPAGE * entry;
                             breakEvenSet = true;
                         }
+                        // At 1.5×risk gain → trail SL to lock in 0.5×risk profit
                         if (breakEvenSet && favorMove >= initialRisk * 1.5) {
-                            // Price moved 1.5×risk → trail SL to lock in 0.5×risk profit
                             double newTrail = entry + initialRisk * 0.5;
                             if (newTrail > trailSl) trailSl = newTrail;
                         }
                         if (barLow <= trailSl) {
                             exitPrice = trailSl * (1 - SLIPPAGE);
-                            exitReason = breakEvenSet ? "TRAIL_STOP" : "STOP_LOSS";
+                            exitReason = (halfRiskSet || breakEvenSet) ? "TRAIL_STOP" : "STOP_LOSS";
                             exitTime = bar.getOpenTime();
                             break;
                         }
@@ -179,19 +185,25 @@ public class BacktestEngine {
                             break;
                         }
                     } else {
-                        // Trailing stop logic for LONG_PE
                         double favorMove = entry - barLow;
+                        // At 0.5×risk gain → lock in 0.2×risk profit (early protection)
+                        if (!halfRiskSet && favorMove >= initialRisk * 0.5) {
+                            trailSl = entry - initialRisk * 0.2;
+                            halfRiskSet = true;
+                        }
+                        // At 1×risk gain → move SL to breakeven
                         if (!breakEvenSet && favorMove >= initialRisk) {
                             trailSl = entry - SLIPPAGE * entry;
                             breakEvenSet = true;
                         }
+                        // At 1.5×risk gain → trail SL to lock in 0.5×risk profit
                         if (breakEvenSet && favorMove >= initialRisk * 1.5) {
                             double newTrail = entry - initialRisk * 0.5;
                             if (newTrail < trailSl) trailSl = newTrail;
                         }
                         if (barHigh >= trailSl) {
                             exitPrice = trailSl * (1 + SLIPPAGE);
-                            exitReason = breakEvenSet ? "TRAIL_STOP" : "STOP_LOSS";
+                            exitReason = (halfRiskSet || breakEvenSet) ? "TRAIL_STOP" : "STOP_LOSS";
                             exitTime = bar.getOpenTime();
                             break;
                         }

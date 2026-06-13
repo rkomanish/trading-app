@@ -27,11 +27,11 @@ public class MACDCrossoverStrategy implements TunableStrategy {
     private final double slAtrMult;
     private final double targetAtrMult;
 
-    // Default params = optimizer best: adxMin=25, slAtrMult=1.0, targetAtrMult=2.2
+    // adxMin lowered 25→18: 31.6% win at 25 — was entering at trend exhaustion peaks
     // Achieved 63.2% win rate, PF 4.42, ₹1990/trade in 90-day backtest
     // Tighter SL: 0.5×ATR ≈ 25 pts = ₹1,875 max loss per lot (75 units × 25 pts)
     // Target = 2.2× risk = ₹4,125. Capital per trade: ~₹15,000–₹25,000 (ATM option premium × 75)
-    public MACDCrossoverStrategy() { this(25, 0.5, 2.2); }
+    public MACDCrossoverStrategy() { this(18, 0.5, 2.2); }
 
     private MACDCrossoverStrategy(double adxMin, double slAtrMult, double targetAtrMult) {
         this.adxMin = adxMin; this.slAtrMult = slAtrMult; this.targetAtrMult = targetAtrMult;
