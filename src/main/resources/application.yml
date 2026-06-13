@@ -2,9 +2,9 @@ spring:
   application:
     name: nifty-autotrader
   datasource:
-    url: jdbc:postgresql://localhost:5432/niftyautotrader
-    username: ${DB_USERNAME:niftyautotrader}
-    password: ${DB_PASSWORD:changeme}
+    url: jdbc:postgresql://localhost:5432/trading-app
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:password}
     hikari:
       maximum-pool-size: 10
       connection-timeout: 30000
