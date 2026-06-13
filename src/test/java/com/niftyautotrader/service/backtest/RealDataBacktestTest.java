@@ -3,6 +3,7 @@ package com.niftyautotrader.service.backtest;
 import com.niftyautotrader.model.Candle;
 import com.niftyautotrader.repository.CandleRepository;
 import com.niftyautotrader.service.strategy.*;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,12 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Runs the grid optimizer against REAL candle data in your PostgreSQL.
  *
- * Run with:
- *   mvn test -Dtest=RealDataBacktestTest -Dspring.profiles.active=realdata
+ * DISABLED by default — does NOT run with "mvn test".
  *
- * Or with custom DB credentials:
- *   DB_USERNAME=... DB_PASSWORD=... mvn test -Dtest=RealDataBacktestTest -Dspring.profiles.active=realdata
+ * How to run: find your DB password in IntelliJ → Run Config → Environment Variables → DB_PASSWORD
+ * Then from Terminal in project root:
+ *
+ *   DB_PASSWORD=yourpassword mvn test -Dtest=RealDataBacktestTest -Dspring.profiles.active=realdata
  */
+@Disabled("Requires real PostgreSQL — pass DB_PASSWORD env var. See class javadoc.")
 @SpringBootTest
 @ActiveProfiles("realdata")
 class RealDataBacktestTest {
