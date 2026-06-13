@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/niftyautotrader
+    username: ${DB_USERNAME:niftyautotrader}
+    password: ${DB_PASSWORD:changeme}
+    hikari:
+      maximum-pool-size: 5
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: Asia/Kolkata
+  flyway:
+    enabled: false
+
+app:
+  trading:
+    live-enabled: false
+  risk:
+    max-lots-per-position: 1
+    max-trades-per-day: 10
+    max-daily-loss: 50000.00
+    weekly-circuit-breaker-loss-days: 5
+    entry-window-start: "09:15"
+    entry-window-end: "15:15"
+    square-off-time: "15:20"
+  kite:
+    api-key: dummy
+    api-secret: dummy
+  sentiment:
+    veto-confidence-threshold: 0.70
+  anthropic:
+    api-key: ${ANTHROPIC_API_KEY:dummy}
