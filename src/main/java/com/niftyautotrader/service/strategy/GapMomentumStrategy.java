@@ -98,18 +98,8 @@ public class GapMomentumStrategy implements TunableStrategy {
         }
         if (todayOpen == null) return Optional.empty();
 
-        // Get previous day's closing price (last candle of previous day)
+        // Get previous day's closing price (last candle of previous day — iterate backwards, skip today)
         double prevClose = Double.NaN;
-        LocalDate prevDate = null;
-        for (int i = candles.size() - 1; i >= 0; i--) {
-            LocalDate cd = candles.get(i).getOpenTime().withZoneSameInstant(IST).toLocalDate();
-            if (cd.equals(today)) continue;
-            if (prevDate == null) prevDate = cd;
-            if (!cd.equals(prevDate)) break;
-            prevClose = candles.get(i).getClose().doubleValue();
-            break; // we only need the last candle of prev day
-        }
-        // Actually get the LAST (most recent) candle of previous day
         for (int i = candles.size() - 1; i >= 0; i--) {
             LocalDate cd = candles.get(i).getOpenTime().withZoneSameInstant(IST).toLocalDate();
             if (cd.equals(today)) continue;

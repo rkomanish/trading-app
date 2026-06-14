@@ -117,7 +117,11 @@ public class BacktestEngine {
 
             LocalDate candleDate = candles.get(i).getOpenTime()
                 .withZoneSameInstant(IST).toLocalDate();
-            if (strategy.getName().contains("BREAKOUT") && candleDate.equals(lastTradeDate)) continue;
+            // One trade per day for strategies that specify it
+            String sn = strategy.getName();
+            boolean oncePerDay = sn.contains("BREAKOUT") || sn.contains("GAP_MOMENTUM")
+                                 || sn.contains("PDH_PDL");
+            if (oncePerDay && candleDate.equals(lastTradeDate)) continue;
 
             try {
                 var signalOpt = strategy.evaluate(ctx);
@@ -145,8 +149,8 @@ public class BacktestEngine {
                 ZonedDateTime exitTime = candles.get(timeExitBar).getOpenTime();
 
                 // Trailing stop: protect profit without cutting winners too early.
-                // Early trail at 0.5× risk was too tight — Nifty noise triggers it prematurely.
-                // Instead: breakeven at 1×risk, then lock 0.5×risk at 1.5×risk gain.
+                // Breakeven at 2×risk (not 1×) — Nifty noise can easily reverse 1×risk.
+                // Lock 1×risk profit at 3×risk gain for meaningful winner capture.
                 double trailSl       = sl;
                 double initialRisk   = Math.abs(entry - sl);
                 boolean breakEvenSet = false;
@@ -158,14 +162,14 @@ public class BacktestEngine {
 
                     if (isBull) {
                         double favorMove = barHigh - entry;
-                        // At 1×risk gain → move SL to breakeven (protect capital)
-                        if (!breakEvenSet && favorMove >= initialRisk) {
+                        // At 2×risk gain → move SL to breakeven
+                        if (!breakEvenSet && favorMove >= initialRisk * 2.0) {
                             trailSl = entry + SLIPPAGE * entry;
                             breakEvenSet = true;
                         }
-                        // At 1.5×risk gain → trail to lock in 0.5×risk profit
-                        if (breakEvenSet && favorMove >= initialRisk * 1.5) {
-                            double newTrail = entry + initialRisk * 0.5;
+                        // At 3×risk gain → trail to lock in 1×risk profit
+                        if (breakEvenSet && favorMove >= initialRisk * 3.0) {
+                            double newTrail = entry + initialRisk * 1.0;
                             if (newTrail > trailSl) trailSl = newTrail;
                         }
                         if (barLow <= trailSl) {
@@ -182,14 +186,14 @@ public class BacktestEngine {
                         }
                     } else {
                         double favorMove = entry - barLow;
-                        // At 1×risk gain → move SL to breakeven (protect capital)
-                        if (!breakEvenSet && favorMove >= initialRisk) {
+                        // At 2×risk gain → move SL to breakeven
+                        if (!breakEvenSet && favorMove >= initialRisk * 2.0) {
                             trailSl = entry - SLIPPAGE * entry;
                             breakEvenSet = true;
                         }
-                        // At 1.5×risk gain → trail to lock in 0.5×risk profit
-                        if (breakEvenSet && favorMove >= initialRisk * 1.5) {
-                            double newTrail = entry - initialRisk * 0.5;
+                        // At 3×risk gain → trail to lock in 1×risk profit
+                        if (breakEvenSet && favorMove >= initialRisk * 3.0) {
+                            double newTrail = entry - initialRisk * 1.0;
                             if (newTrail < trailSl) trailSl = newTrail;
                         }
                         if (barHigh >= trailSl) {
