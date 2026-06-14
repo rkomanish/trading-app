@@ -34,7 +34,8 @@ public class BacktestEngine {
     private static final Logger log = LoggerFactory.getLogger(BacktestEngine.class);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final int LOT_SIZE = 75;
-    private static final double SLIPPAGE = 0.0002; // 0.02% per side
+    private static final double SLIPPAGE    = 0.0002; // 0.02% per side
+    private static final double MAX_SL_PTS  = 20.0;   // hard cap: max 20 Nifty pts SL = ₹1,500/lot
 
     private final TradeCostCalculator costCalc;
 
@@ -137,8 +138,23 @@ public class BacktestEngine {
 
                 double sl = signal.getSuggestedStopLoss() != null
                     ? signal.getSuggestedStopLoss().doubleValue() : entry * 0.7;
-                double target = signal.getSuggestedTarget() != null
-                    ? signal.getSuggestedTarget().doubleValue() : entry * 1.3;
+
+                // Hard cap: SL can never be more than MAX_SL_PTS (20 pts = ₹1,500) from entry.
+                // ATR-based SLs can blow out to 30-40 pts in volatile conditions otherwise.
+                // Recalculate target to preserve R:R ratio after capping.
+                if (isBull && sl < entry - MAX_SL_PTS) {
+                    sl = entry - MAX_SL_PTS;
+                } else if (!isBull && sl > entry + MAX_SL_PTS) {
+                    sl = entry + MAX_SL_PTS;
+                }
+
+                double strategyRisk = signal.getSuggestedStopLoss() != null && signal.getSuggestedTarget() != null
+                    ? Math.abs(signal.getSuggestedTarget().doubleValue() - signal.getSuggestedStopLoss().doubleValue())
+                      / Math.abs(signal.getSuggestedEntry().doubleValue() - signal.getSuggestedStopLoss().doubleValue())
+                    : 2.0;
+                double cappedRisk = Math.abs(entry - sl);
+                double target = isBull ? entry + cappedRisk * strategyRisk
+                                       : entry - cappedRisk * strategyRisk;
 
                 // Time-exit: up to 50 bars (≈4 hours) to reach target.
                 // 25 bars was cutting winners too early → PF < 1 despite 59% win rates.
