@@ -134,6 +134,7 @@ public class BacktestController {
     @PostMapping("/run")
     public String runBacktest(@RequestParam String strategyName,
                                @RequestParam(defaultValue = "NIFTY") String symbol,
+                               @RequestParam(defaultValue = "5m") String timeframe,
                                @RequestParam(defaultValue = "4") int windows,
                                @RequestParam(required = false) String fromDate,
                                @RequestParam(required = false) String toDate,
@@ -147,7 +148,7 @@ public class BacktestController {
 
         LocalDate from = parseDateOrNull(fromDate);
         LocalDate to   = parseDateOrNull(toDate);
-        var candles = loadCandles(symbol, from, to);
+        var candles = loadCandles(symbol, timeframe, from, to);
         BacktestResult result = backtestEngine.runWalkForward(strategy, candles, windows);
 
         // Save to DB
@@ -155,7 +156,7 @@ public class BacktestController {
             strategy instanceof TunableStrategy ts ? ts.currentParams() : null,
             false, null);
 
-        addResultToModel(model, result, strategyName, symbol, fromDate, toDate);
+        addResultToModel(model, result, strategyName, symbol, timeframe, windows, fromDate, toDate);
         model.addAttribute("recentRuns", runRepo.findTop50ByOrderByRunAtDesc());
         return "backtest";
     }
@@ -165,6 +166,7 @@ public class BacktestController {
     @PostMapping("/optimize")
     public String optimizeStrategy(@RequestParam String strategyName,
                                     @RequestParam(defaultValue = "NIFTY") String symbol,
+                                    @RequestParam(defaultValue = "5m") String timeframe,
                                     @RequestParam(defaultValue = "4") int windows,
                                     @RequestParam(required = false) String fromDate,
                                     @RequestParam(required = false) String toDate,
@@ -178,7 +180,7 @@ public class BacktestController {
 
         LocalDate from = parseDateOrNull(fromDate);
         LocalDate to   = parseDateOrNull(toDate);
-        var candles = loadCandles(symbol, from, to);
+        var candles = loadCandles(symbol, timeframe, from, to);
 
         // Run optimizer — tries all param combinations
         OptimizationResult optResult = optimizer.optimize(tunable, candles, windows);
@@ -194,7 +196,7 @@ public class BacktestController {
             optResult.defaultResult().dataFrom(), optResult.defaultResult().dataTo(),
             optResult.defaultParams(), false, null);
 
-        addResultToModel(model, optResult.bestResult(), strategyName, symbol, fromDate, toDate);
+        addResultToModel(model, optResult.bestResult(), strategyName, symbol, timeframe, windows, fromDate, toDate);
         model.addAttribute("optResult", optResult);
         model.addAttribute("recentRuns", runRepo.findTop50ByOrderByRunAtDesc());
         model.addAttribute("optimizerRuns",
@@ -207,6 +209,7 @@ public class BacktestController {
     @PostMapping("/enhance")
     public String enhanceWithClaude(@RequestParam String strategyName,
                                      @RequestParam(defaultValue = "NIFTY") String symbol,
+                                     @RequestParam(defaultValue = "5m") String timeframe,
                                      @RequestParam(defaultValue = "4") int windows,
                                      @RequestParam(required = false) String fromDate,
                                      @RequestParam(required = false) String toDate,
@@ -220,7 +223,7 @@ public class BacktestController {
 
         LocalDate from = parseDateOrNull(fromDate);
         LocalDate to   = parseDateOrNull(toDate);
-        var candles = loadCandles(symbol, from, to);
+        var candles = loadCandles(symbol, timeframe, from, to);
 
         // Step 1: optimize
         OptimizationResult optResult = optimizer.optimize(tunable, candles, windows);
@@ -234,7 +237,7 @@ public class BacktestController {
             optResult.bestResult().dataFrom(), optResult.bestResult().dataTo(),
             optResult.bestParams(), true, optResult.bestScore());
 
-        addResultToModel(model, optResult.bestResult(), strategyName, symbol, fromDate, toDate);
+        addResultToModel(model, optResult.bestResult(), strategyName, symbol, timeframe, windows, fromDate, toDate);
         model.addAttribute("optResult", optResult);
         model.addAttribute("enhancement", suggestion);
         model.addAttribute("recentRuns", runRepo.findTop50ByOrderByRunAtDesc());
@@ -252,18 +255,21 @@ public class BacktestController {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private java.util.List<com.niftyautotrader.model.Candle> loadCandles(
-            String symbol, LocalDate from, LocalDate to) {
+            String symbol, String timeframe, LocalDate from, LocalDate to) {
         ZonedDateTime f = from != null ? from.atStartOfDay(IST) : ZonedDateTime.now(IST).minusYears(10);
         ZonedDateTime t = to   != null ? to.plusDays(1).atStartOfDay(IST) : ZonedDateTime.now(IST).plusDays(1);
-        return candleRepo.findBySymbolAndTimeframeAndOpenTimeBetweenOrderByOpenTimeAsc(symbol, "5m", f, t);
+        return candleRepo.findBySymbolAndTimeframeAndOpenTimeBetweenOrderByOpenTimeAsc(symbol, timeframe, f, t);
     }
 
     private void addResultToModel(Model model, BacktestResult result, String strategyName,
-                                   String symbol, String fromDate, String toDate) {
+                                   String symbol, String timeframe, int windows,
+                                   String fromDate, String toDate) {
         model.addAttribute("result", result);
         model.addAttribute("strategies", strategiesByName.keySet());
         model.addAttribute("selectedStrategy", strategyName);
         model.addAttribute("symbol", symbol);
+        model.addAttribute("selectedTimeframe", timeframe);
+        model.addAttribute("selectedWindows", windows);
         model.addAttribute("fromDate", fromDate);
         model.addAttribute("toDate", toDate);
         model.addAttribute("defaultFromDate", LocalDate.now(IST).minusDays(30).toString());
