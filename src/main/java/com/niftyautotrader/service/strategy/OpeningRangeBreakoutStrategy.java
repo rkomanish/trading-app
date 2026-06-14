@@ -19,7 +19,9 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final LocalTime ORB_START = LocalTime.of(9, 15);
-    private static final LocalTime ORB_END   = LocalTime.of(9, 30);
+    // 45-minute range (9:15–10:00): first 15 min is pure noise on Nifty.
+    // Professional ORB uses 30–60 min to let the market settle.
+    private static final LocalTime ORB_END   = LocalTime.of(10, 0);
 
     private final LocalTime entryCutoff;
     private final double maxOrbAtrMult;
@@ -29,7 +31,8 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
     // Tighter SL: 0.5×ATR ≈ 25 pts = ₹1,875 max loss per lot (75 units × 25 pts)
     // Target = 2× risk = ₹3,750. Capital per trade: ~₹15,000–₹25,000 (ATM option premium × 75)
     public OpeningRangeBreakoutStrategy() {
-        this(LocalTime.of(11, 0), 2.5, 0.5, 1.2);
+        // entryCutoff 13:00 — don't chase breakouts after 1 PM (afternoon liquidity dries up)
+        this(LocalTime.of(13, 0), 2.5, 0.5, 1.2);
     }
 
     private OpeningRangeBreakoutStrategy(LocalTime entryCutoff, double maxOrbAtrMult,
@@ -101,18 +104,23 @@ public class OpeningRangeBreakoutStrategy implements TunableStrategy {
         double avgOrbVol = orbBars > 0 ? (double) orbVol / orbBars : 0;
         if (avgOrbVol > 0 && vol < avgOrbVol * volMult) return Optional.empty();
 
-        double buffer = atr * 0.10;
+        // Buffer = 0.05× ATR to avoid entering on tiny pokes above range
+        double buffer = atr * 0.05;
         if (price > orbHigh + buffer) {
-            double sl = Math.max(orbLow, price - atr * slAtrCap);
+            // SL just below the ORB low — that's the invalidation level
+            double sl  = orbLow - atr * 0.05;
             double tgt = price + (price - sl) * 2.0;
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, price, sl, tgt,
-                String.format("ORB bull close=%.0f hi=%.0f sl=%.0f tgt=%.0f", price, orbHigh, sl, tgt)));
+                String.format("ORB bull close=%.0f hi=%.0f lo=%.0f sl=%.0f tgt=%.0f",
+                    price, orbHigh, orbLow, sl, tgt)));
         }
         if (price < orbLow - buffer) {
-            double sl = Math.min(orbHigh, price + atr * slAtrCap);
+            // SL just above the ORB high — that's the invalidation level
+            double sl  = orbHigh + atr * 0.05;
             double tgt = price - (sl - price) * 2.0;
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, price, sl, tgt,
-                String.format("ORB bear close=%.0f lo=%.0f sl=%.0f tgt=%.0f", price, orbLow, sl, tgt)));
+                String.format("ORB bear close=%.0f lo=%.0f hi=%.0f sl=%.0f tgt=%.0f",
+                    price, orbLow, orbHigh, sl, tgt)));
         }
         return Optional.empty();
     }
