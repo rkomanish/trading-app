@@ -15,10 +15,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Runs strategies on a schedule, routes signals through sentiment veto and RiskEngine,
@@ -41,6 +44,10 @@ public class StrategyEngine {
 
     private volatile MarketRegime lastRegime = MarketRegime.RANGING;
     private volatile String lastActiveStrategies = "";
+
+    /** strategies that have already fired an order today — reset at midnight */
+    private final Set<String> firedToday = new HashSet<>();
+    private volatile LocalDate firedDate = null;
 
     public StrategyEngine(List<TradingStrategy> strategies,
                           CandleRepository candleRepo,
@@ -86,7 +93,18 @@ public class StrategyEngine {
     public MarketRegime getLastRegime() { return lastRegime; }
     public String getLastActiveStrategies() { return lastActiveStrategies; }
 
-    private void processSignal(Signal signal, MarketContext ctx) {
+    private synchronized void processSignal(Signal signal, MarketContext ctx) {
+        // One entry order per strategy per day — prevents spam from PDH_PDL, ORB, etc.
+        LocalDate today = ZonedDateTime.now(IST).toLocalDate();
+        if (!today.equals(firedDate)) {
+            firedToday.clear();
+            firedDate = today;
+        }
+        if (firedToday.contains(signal.getStrategyName())) {
+            log.debug("Dedup: {} already fired today, skipping signal", signal.getStrategyName());
+            return;
+        }
+
         signalRepo.save(signal);
         log.info("Signal generated: strategy={} direction={} symbol={}",
             signal.getStrategyName(), signal.getDirection(), signal.getSymbol());
@@ -119,6 +137,7 @@ public class StrategyEngine {
             .build();
 
         executionService.submitOpenOrder(orderRequest, signal);
+        firedToday.add(signal.getStrategyName());
         signalRepo.save(signal);
     }
 

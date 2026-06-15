@@ -102,18 +102,22 @@ public class StrategySelector {
 
             // Moderate trend: PDH/PDL works in all regimes (institutional levels).
             // MACD and EMA crossovers work in moderate trends.
+            // Candlestick pattern engulfing signals trend continuation at key levels.
             case MODERATE_TREND -> List.of(
                 "PDH_PDL_BREAKOUT",
                 "MACD_CROSSOVER",
                 "EMA_CROSSOVER_9_21",
-                "BOLLINGER_SQUEEZE_BREAKOUT"
+                "BOLLINGER_SQUEEZE_BREAKOUT",
+                "CANDLESTICK_PATTERN"
             ).contains(name);
 
             // Ranging: PDH/PDL still fires on breakouts even in ranging days.
             // BB squeeze catches the eventual volatility expansion.
+            // Candlestick engulfing at VWAP works well in ranging/mean-reverting markets.
             case RANGING -> List.of(
                 "PDH_PDL_BREAKOUT",
-                "BOLLINGER_SQUEEZE_BREAKOUT"
+                "BOLLINGER_SQUEEZE_BREAKOUT",
+                "CANDLESTICK_PATTERN"
             ).contains(name);
         };
     }

@@ -98,6 +98,7 @@ public class OrderExecutionService {
             .side(OrderSide.SELL)
             .quantity(trade.getQuantity())
             .strategyName(trade.getStrategyName())
+            .limitPrice(currentPrice)
             .closingOrder(true)
             .build();
 
