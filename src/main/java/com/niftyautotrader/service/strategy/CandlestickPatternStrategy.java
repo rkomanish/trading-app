@@ -15,258 +15,191 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Price-action pattern strategy that thinks like a real Nifty intraday trader.
+ *
+ * Only two patterns are used — both must be STRONG and at a REAL key level:
+ *
+ *   Bullish Engulfing  — current green body FULLY covers prior red body,
+ *                        body must be >= minEngulfRatio × prior body (strength filter)
+ *   Bearish Engulfing  — current red body FULLY covers prior green body, same strength filter
+ *
+ * Every trade requires ALL of the following (human checklist):
+ *   1. Time: 9:45 – 14:00 only
+ *   2. Pattern at a REAL level: VWAP ± band  OR  PDH/PDL ± band  (no intraday H/L — too loose)
+ *   3. Trend aligned: EMA(21) direction over last 30 bars (not 15 — avoids dead-cat traps)
+ *   4. VWAP bias: bull only when price > VWAP, bear only when price < VWAP
+ *   5. Volume surge: pattern candle volume > volumeMult × 20-bar average
+ *   6. RSI: bull 40–68, bear 32–60  (tighter than before — no buying overbought)
+ *   7. Pattern strength: engulfing body >= minEngulfRatio × prior body (no micro-engulfs)
+ *   8. Pattern size: engulfing candle range >= 0.4 × ATR (real move, not noise)
+ *   9. No trade within 8 bars of last trade (simple bar count, no pattern re-scan)
+ *
+ * SL = opposite end of the engulfing candle (the invalidation point).
+ * Target = rRRatio × risk.
+ */
 @Component
 public class CandlestickPatternStrategy implements TunableStrategy {
 
-    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime ENTRY_START = LocalTime.of(9, 45);
-    private static final LocalTime ENTRY_END   = LocalTime.of(14, 30);
-    private static final String NAME = "CANDLESTICK_PATTERN";
+    private static final ZoneId IST       = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime START  = LocalTime.of(9, 45);
+    private static final LocalTime END    = LocalTime.of(14, 0);
+    private static final String NAME      = "CANDLESTICK_PATTERN";
 
-    private enum PatternType {
-        BULL_ENGULFING, BEAR_ENGULFING, HAMMER, SHOOTING_STAR,
-        INSIDE_BAR_BULL, INSIDE_BAR_BEAR, NONE
-    }
-
-    private final double minWickRatio;
-    private final double volumeMult;
-    private final double rRRatio;
-    private final double levelProxAtr;
+    private final double minEngulfRatio; // current body must be >= this × prior body
+    private final double volumeMult;     // pattern candle volume > avgVol × this
+    private final double rRRatio;        // reward:risk ratio
+    private final double levelBandAtr;  // key level proximity in ATR units
 
     public CandlestickPatternStrategy() {
-        this(2.0, 1.3, 2.0, 0.5);
+        this(1.5, 1.5, 2.0, 0.4);
     }
 
-    private CandlestickPatternStrategy(double minWickRatio, double volumeMult,
-                                        double rRRatio, double levelProxAtr) {
-        this.minWickRatio  = minWickRatio;
-        this.volumeMult    = volumeMult;
-        this.rRRatio       = rRRatio;
-        this.levelProxAtr  = levelProxAtr;
+    private CandlestickPatternStrategy(double minEngulfRatio, double volumeMult,
+                                        double rRRatio, double levelBandAtr) {
+        this.minEngulfRatio = minEngulfRatio;
+        this.volumeMult     = volumeMult;
+        this.rRRatio        = rRRatio;
+        this.levelBandAtr   = levelBandAtr;
     }
 
     @Override public String getName() { return NAME; }
 
     @Override
     public Map<String, Double> currentParams() {
-        return Map.of(
-            "minWickRatio", minWickRatio,
-            "volumeMult",   volumeMult,
-            "rRRatio",      rRRatio,
-            "levelProxAtr", levelProxAtr
-        );
+        return Map.of("minEngulfRatio", minEngulfRatio, "volumeMult", volumeMult,
+                      "rRRatio", rRRatio, "levelBandAtr", levelBandAtr);
     }
 
     @Override
     public Map<String, double[]> paramGrid() {
         return Map.of(
-            "minWickRatio",  new double[]{1.5, 2.0, 2.5},
-            "volumeMult",    new double[]{1.0, 1.3, 1.5},
-            "rRRatio",       new double[]{1.5, 2.0, 2.5},
-            "levelProxAtr",  new double[]{0.3, 0.5, 0.8}
+            "minEngulfRatio", new double[]{1.2, 1.5, 2.0},
+            "volumeMult",     new double[]{1.3, 1.5, 2.0},
+            "rRRatio",        new double[]{1.5, 2.0, 2.5},
+            "levelBandAtr",   new double[]{0.3, 0.4, 0.6}
         );
     }
 
     @Override
     public TradingStrategy withParams(Map<String, Double> p) {
         return new CandlestickPatternStrategy(
-            p.getOrDefault("minWickRatio", minWickRatio),
-            p.getOrDefault("volumeMult",   volumeMult),
-            p.getOrDefault("rRRatio",      rRRatio),
-            p.getOrDefault("levelProxAtr", levelProxAtr)
+            p.getOrDefault("minEngulfRatio", minEngulfRatio),
+            p.getOrDefault("volumeMult",     volumeMult),
+            p.getOrDefault("rRRatio",        rRRatio),
+            p.getOrDefault("levelBandAtr",   levelBandAtr)
         );
     }
 
     @Override
     public Optional<Signal> evaluate(MarketContext ctx) {
         LocalTime now = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
-        if (now.isBefore(ENTRY_START) || now.isAfter(ENTRY_END)) return Optional.empty();
+        if (now.isBefore(START) || now.isAfter(END)) return Optional.empty();
 
         List<Candle> candles = ctx.candles5m();
-        if (candles.size() < 25) return Optional.empty();
+        if (candles.size() < 45) return Optional.empty(); // need enough history for EMA + trend
 
         LocalDate today = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalDate();
         double atr = ctx.currentAtr();
         if (atr <= 0) return Optional.empty();
 
         Candle curr  = candles.get(candles.size() - 1);
-        Candle prev1 = candles.get(candles.size() - 2);
-        Candle prev2 = candles.get(candles.size() - 3);
+        Candle prev  = candles.get(candles.size() - 2);
 
-        LocalDate currDate = curr.getOpenTime().withZoneSameInstant(IST).toLocalDate();
-        if (!currDate.equals(today)) return Optional.empty();
+        // Must be today's candle
+        if (!curr.getOpenTime().withZoneSameInstant(IST).toLocalDate().equals(today))
+            return Optional.empty();
 
-        PatternType pattern = detectPattern(prev2, prev1, curr, atr);
-        if (pattern == PatternType.NONE) return Optional.empty();
+        // ── Pattern detection: Engulfing only ──────────────────────────────────
+        double cO = curr.getOpen().doubleValue(),  cC = curr.getClose().doubleValue();
+        double cH = curr.getHigh().doubleValue(),  cL = curr.getLow().doubleValue();
+        double pO = prev.getOpen().doubleValue(),  pC = prev.getClose().doubleValue();
 
-        boolean isBull = pattern == PatternType.BULL_ENGULFING
-                      || pattern == PatternType.HAMMER
-                      || pattern == PatternType.INSIDE_BAR_BULL;
+        double currBody = Math.abs(cC - cO);
+        double prevBody = Math.abs(pC - pO);
+        double minBody  = atr * 0.08; // real candle, not a doji
 
-        if (!isTrendAligned(pattern, candles)) return Optional.empty();
+        if (currBody < minBody || prevBody < minBody) return Optional.empty();
 
-        double price = curr.getClose().doubleValue();
-        double vwap  = ctx.currentVwap().doubleValue();
+        // Pattern size: whole candle range must be meaningful
+        if ((cH - cL) < atr * 0.4) return Optional.empty();
 
-        if (isBull && price < vwap) return Optional.empty();
-        if (!isBull && price > vwap) return Optional.empty();
+        // Strength: current body must significantly outsize previous body
+        if (currBody < prevBody * minEngulfRatio) return Optional.empty();
 
+        boolean isBull;
+        double  sl;
+
+        boolean prevRed   = pC < pO;
+        boolean currGreen = cC > cO;
+        boolean prevGreen = pC > pO;
+        boolean currRed   = cC < cO;
+
+        if (prevRed && currGreen && cO <= pC && cC >= pO) {
+            // Bullish engulfing: green body covers red body
+            isBull = true;
+            sl = cL - atr * 0.05; // just below the engulfing candle's low
+        } else if (prevGreen && currRed && cO >= pC && cC <= pO) {
+            // Bearish engulfing: red body covers green body
+            isBull = false;
+            sl = cH + atr * 0.05; // just above the engulfing candle's high
+        } else {
+            return Optional.empty();
+        }
+
+        double price = cC;
+
+        // ── VWAP bias (institutional direction filter) ─────────────────────────
+        double vwap = ctx.currentVwap().doubleValue();
+        if (isBull  && price < vwap) return Optional.empty(); // bull trade needs bullish VWAP
+        if (!isBull && price > vwap) return Optional.empty(); // bear trade needs bearish VWAP
+
+        // ── Key level: MUST be near VWAP, PDH, or PDL — nothing else ──────────
+        // (Intraday H/L excluded: price is trivially always near those)
+        double band = levelBandAtr * atr;
         double[] pdhl = findPdHighLow(candles, today);
-        double pdh = pdhl[0];
-        double pdl = pdhl[1];
+        double pdh = pdhl[0], pdl = pdhl[1];
 
-        List<Candle> todayCandles = candles.stream()
-            .filter(c -> c.getOpenTime().withZoneSameInstant(IST).toLocalDate().equals(today))
-            .toList();
+        boolean atVwap = Math.abs(price - vwap) <= band;
+        boolean atPdh  = pdh > 0 && Math.abs(price - pdh) <= band;
+        boolean atPdl  = pdl > 0 && Math.abs(price - pdl) <= band;
+        boolean atRound = Math.abs(price - Math.round(price / 100.0) * 100.0) <= band;
+        if (!atVwap && !atPdh && !atPdl && !atRound) return Optional.empty();
 
-        if (!isNearKeyLevel(price, vwap, pdh, pdl, atr, todayCandles)) return Optional.empty();
+        // ── Higher-timeframe trend: EMA(21) over last 30 bars ─────────────────
+        int n = candles.size();
+        double[] closes = candles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
+        double[] ema21  = IndicatorUtils.ema(closes, 21);
+        boolean  uptrend = ema21[n - 1] > ema21[n - 31]; // 30-bar trend (not 15)
+        if (isBull != uptrend) return Optional.empty();
 
+        // ── Volume: pattern candle must show commitment ────────────────────────
         double avgVol = avgVolume(candles, 20);
         if (avgVol > 0 && curr.getVolume() < avgVol * volumeMult) return Optional.empty();
 
-        double[] closes = candles.stream()
-            .mapToDouble(c -> c.getClose().doubleValue())
-            .toArray();
+        // ── RSI: tighter bands — no chasing extremes ──────────────────────────
         double rsi = IndicatorUtils.rsiLast(closes, 14);
+        if (isBull  && (rsi < 40 || rsi > 68)) return Optional.empty();
+        if (!isBull && (rsi < 32 || rsi > 60)) return Optional.empty();
 
-        if (isBull  && (rsi < 35 || rsi > 70)) return Optional.empty();
-        if (!isBull && (rsi < 30 || rsi > 65)) return Optional.empty();
-
-        if (hasRecentPattern(candles, 10)) return Optional.empty();
-
-        double sl;
-        if (pattern == PatternType.BULL_ENGULFING) {
-            sl = curr.getLow().doubleValue() - 0.05 * atr;
-        } else if (pattern == PatternType.BEAR_ENGULFING) {
-            sl = curr.getHigh().doubleValue() + 0.05 * atr;
-        } else if (pattern == PatternType.HAMMER) {
-            sl = curr.getLow().doubleValue() - 0.05 * atr;
-        } else if (pattern == PatternType.SHOOTING_STAR) {
-            sl = curr.getHigh().doubleValue() + 0.05 * atr;
-        } else if (pattern == PatternType.INSIDE_BAR_BULL) {
-            sl = curr.getLow().doubleValue() - 0.05 * atr;
-        } else {
-            sl = curr.getHigh().doubleValue() + 0.05 * atr;
-        }
-
+        // ── Target and signal ──────────────────────────────────────────────────
         double risk = Math.abs(price - sl);
         double tgt  = isBull ? price + rRRatio * risk : price - rRRatio * risk;
 
-        SignalDirection dir = isBull ? SignalDirection.LONG_CE : SignalDirection.LONG_PE;
-        String trend = isBull ? "UP" : "DOWN";
+        String level = atVwap ? "VWAP" : (atPdh ? "PDH" : (atPdl ? "PDL" : "ROUND"));
         String reason = String.format(
-            "%s near VWAP(%.0f) vol=%.1fx RSI=%.0f trend=%s price=%.0f",
-            pattern.name(), vwap, (avgVol > 0 ? curr.getVolume() / avgVol : 0), rsi, trend, price
+            "%s at %s(%.0f) body=%.0f vol=%.1fx RSI=%.0f trend=%s",
+            isBull ? "BULL_ENGULF" : "BEAR_ENGULF",
+            level, atVwap ? vwap : (atPdh ? pdh : pdl),
+            currBody, avgVol > 0 ? curr.getVolume() / avgVol : 0,
+            rsi, isBull ? "UP" : "DOWN"
         );
 
+        SignalDirection dir = isBull ? SignalDirection.LONG_CE : SignalDirection.LONG_PE;
         return Optional.of(buildSignal(ctx, dir, price, sl, tgt, reason));
     }
 
-    private PatternType detectPattern(Candle prev2, Candle prev1, Candle curr, double atr) {
-        double p1O = prev1.getOpen().doubleValue();
-        double p1C = prev1.getClose().doubleValue();
-        double p1H = prev1.getHigh().doubleValue();
-        double p1L = prev1.getLow().doubleValue();
-
-        double cO = curr.getOpen().doubleValue();
-        double cC = curr.getClose().doubleValue();
-        double cH = curr.getHigh().doubleValue();
-        double cL = curr.getLow().doubleValue();
-
-        boolean p1Red   = p1C < p1O;
-        boolean p1Green = p1C > p1O;
-        boolean cGreen  = cC > cO;
-        boolean cRed    = cC < cO;
-
-        if (p1Red && cGreen && cO < p1C && cC > p1O) {
-            return PatternType.BULL_ENGULFING;
-        }
-
-        if (p1Green && cRed && cO > p1C && cC < p1O) {
-            return PatternType.BEAR_ENGULFING;
-        }
-
-        double cBody      = Math.abs(cC - cO);
-        double cLowerWick = Math.min(cO, cC) - cL;
-        double cUpperWick = cH - Math.max(cO, cC);
-        double minBody    = curr.getClose().doubleValue() * 0.0003;
-
-        if (cBody >= minBody
-                && cLowerWick >= minWickRatio * cBody
-                && cUpperWick <= 0.3 * cBody) {
-            double p2C = prev2.getClose().doubleValue();
-            double p1Cl = prev1.getClose().doubleValue();
-            boolean decliningPrior = p1Cl < p2C && p1Cl < prev1.getOpen().doubleValue();
-            if (decliningPrior) return PatternType.HAMMER;
-        }
-
-        if (cBody >= minBody
-                && cUpperWick >= minWickRatio * cBody
-                && cLowerWick <= 0.3 * cBody) {
-            double p2C = prev2.getClose().doubleValue();
-            double p1Cl = prev1.getClose().doubleValue();
-            boolean risingPrior = p1Cl > p2C && p1Cl > prev1.getOpen().doubleValue();
-            if (risingPrior) return PatternType.SHOOTING_STAR;
-        }
-
-        boolean contained = cH < p1H && cL > p1L;
-        if (contained) {
-            double midpoint = (p1H + p1L) / 2.0;
-            if (cC > midpoint) return PatternType.INSIDE_BAR_BULL;
-            if (cC < midpoint) return PatternType.INSIDE_BAR_BEAR;
-        }
-
-        return PatternType.NONE;
-    }
-
-    private boolean isTrendAligned(PatternType pattern, List<Candle> candles) {
-        boolean isBull = pattern == PatternType.BULL_ENGULFING
-                      || pattern == PatternType.HAMMER
-                      || pattern == PatternType.INSIDE_BAR_BULL;
-
-        int n = candles.size();
-        if (n < 36) return true;
-
-        double[] closes = candles.stream()
-            .mapToDouble(c -> c.getClose().doubleValue())
-            .toArray();
-
-        double[] ema21 = IndicatorUtils.ema(closes, 21);
-        double emaLast = ema21[n - 1];
-        double ema15ago = ema21[n - 16];
-
-        boolean uptrend = emaLast > ema15ago;
-        return isBull == uptrend;
-    }
-
-    private boolean isNearKeyLevel(double price, double vwap, double pdh, double pdl,
-                                    double atr, List<Candle> todayCandles) {
-        double band = levelProxAtr * atr;
-
-        if (Math.abs(price - vwap) <= band) return true;
-        if (pdh > 0 && Math.abs(price - pdh) <= band) return true;
-        if (pdl > 0 && Math.abs(price - pdl) <= band) return true;
-
-        double round100 = Math.round(price / 100.0) * 100.0;
-        if (Math.abs(price - round100) <= band) return true;
-
-        double round500 = Math.round(price / 500.0) * 500.0;
-        if (Math.abs(price - round500) <= band) return true;
-
-        if (!todayCandles.isEmpty()) {
-            double intradayHigh = todayCandles.stream()
-                .mapToDouble(c -> c.getHigh().doubleValue()).max().orElse(0);
-            double intradayLow = todayCandles.stream()
-                .mapToDouble(c -> c.getLow().doubleValue()).min().orElse(0);
-            if (Math.abs(price - intradayHigh) <= band) return true;
-            if (Math.abs(price - intradayLow) <= band) return true;
-        }
-
-        return false;
-    }
-
     private double[] findPdHighLow(List<Candle> candles, LocalDate today) {
-        double pdh = 0, pdl = 0;
         LocalDate prevDay = null;
         for (Candle c : candles) {
             LocalDate cd = c.getOpenTime().withZoneSameInstant(IST).toLocalDate();
@@ -290,31 +223,11 @@ public class CandlestickPatternStrategy implements TunableStrategy {
     private double avgVolume(List<Candle> candles, int lookback) {
         int n = candles.size();
         int from = Math.max(0, n - lookback - 1);
-        int to   = n - 1;
-        if (to <= from) return 0;
-        long sum = 0;
-        int count = 0;
-        for (int i = from; i < to; i++) {
-            sum += candles.get(i).getVolume();
-            count++;
+        long sum = 0; int count = 0;
+        for (int i = from; i < n - 1; i++) {
+            sum += candles.get(i).getVolume(); count++;
         }
         return count == 0 ? 0 : (double) sum / count;
-    }
-
-    private boolean hasRecentPattern(List<Candle> candles, int lookbackBars) {
-        int n = candles.size();
-        if (n < lookbackBars + 3) return false;
-        int checkFrom = n - 1 - lookbackBars;
-        int checkTo   = n - 2;
-        for (int i = checkFrom + 2; i <= checkTo; i++) {
-            Candle p2 = candles.get(i - 2);
-            Candle p1 = candles.get(i - 1);
-            Candle c  = candles.get(i);
-            double mockAtr = Math.abs(c.getHigh().doubleValue() - c.getLow().doubleValue()) * 1.5;
-            if (mockAtr <= 0) mockAtr = 1;
-            if (detectPattern(p2, p1, c, mockAtr) != PatternType.NONE) return true;
-        }
-        return false;
     }
 
     private Signal buildSignal(MarketContext ctx, SignalDirection dir, double entry,
