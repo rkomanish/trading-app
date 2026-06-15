@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.niftyautotrader.model.Candle;
 import com.niftyautotrader.repository.CandleRepository;
-import io.netty.handler.codec.http.HttpClientCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -149,47 +148,55 @@ public class YahooFinanceService {
     }
 
     /**
-     * Obtain a Yahoo crumb. We call the crumb endpoint directly and capture the
-     * Set-Cookie headers it returns — no need to hit the landing page first.
+     * Obtain a Yahoo crumb. Must bootstrap session cookies from finance.yahoo.com first —
+     * the crumb endpoint returns "Invalid Cookie" without them.
      */
     private synchronized void refreshCrumb() throws Exception {
-        log.info("Fetching Yahoo crumb...");
+        log.info("Fetching Yahoo session cookies...");
 
+        // Step 1: hit Yahoo Finance to get session cookies (A1/A3 etc.)
+        // The 64 KB maxHeaderSize set in the constructor handles Yahoo's large Set-Cookie headers.
         AtomicReference<String> cookieHolder = new AtomicReference<>("");
-        String crumb = webClient.get()
-            .uri(CRUMB_URL)
+        webClient.get()
+            .uri("https://finance.yahoo.com/")
             .exchangeToMono(res -> {
-                // Capture any cookies the crumb endpoint sets
                 String cookies = res.cookies().values().stream()
                     .flatMap(List::stream)
                     .map(c -> c.getName() + "=" + c.getValue())
                     .collect(Collectors.joining("; "));
-                if (!cookies.isEmpty()) cookieHolder.set(cookies);
-                return res.bodyToMono(String.class);
+                cookieHolder.set(cookies);
+                return res.bodyToMono(String.class).then();
             })
             .timeout(Duration.ofSeconds(15))
             .block();
 
-        if (crumb == null || crumb.isBlank() || crumb.startsWith("<")) {
-            // Crumb endpoint returned HTML (consent wall) — try with a minimal cookie
-            log.warn("Crumb endpoint returned non-crumb response, retrying with minimal cookie");
-            cachedCookie = "A1=d=AQABBJsGBGQCEPub; A3=d=AQABBJsGBGQCEPub";
-            crumb = webClient.get()
-                .uri(CRUMB_URL)
-                .header("Cookie", cachedCookie)
-                .retrieve()
-                .bodyToMono(String.class)
-                .timeout(Duration.ofSeconds(15))
-                .block();
-        } else if (!cookieHolder.get().isEmpty()) {
-            cachedCookie = cookieHolder.get();
-        }
+        cachedCookie = cookieHolder.get().isEmpty()
+            ? "A1=d=AQABBJsGBGQCEPub; A3=d=AQABBJsGBGQCEPub"  // fallback
+            : cookieHolder.get();
+        log.debug("Yahoo cookies ({}): {}...", cachedCookie.length(),
+            cachedCookie.substring(0, Math.min(60, cachedCookie.length())));
 
-        if (crumb == null || crumb.isBlank() || crumb.startsWith("<")) {
+        // Step 2: fetch crumb with the session cookies
+        String crumb = webClient.get()
+            .uri(CRUMB_URL)
+            .header("Cookie", cachedCookie)
+            .retrieve()
+            .bodyToMono(String.class)
+            .timeout(Duration.ofSeconds(15))
+            .block();
+
+        if (!isValidCrumb(crumb)) {
             throw new IllegalStateException("Failed to obtain Yahoo crumb (got: " + crumb + ")");
         }
         cachedCrumb = crumb.trim();
-        log.info("Yahoo crumb obtained: {}", cachedCrumb);
+        log.info("Yahoo crumb obtained successfully (length={})", cachedCrumb.length());
+    }
+
+    /** A valid crumb is a short non-JSON string — not HTML, not a JSON error body. */
+    private boolean isValidCrumb(String s) {
+        if (s == null || s.isBlank()) return false;
+        String t = s.trim();
+        return !t.startsWith("<") && !t.startsWith("{") && t.length() < 64;
     }
 
     private List<Candle> fetchWithCrumb(String yahooSymbol, String appSymbol,
