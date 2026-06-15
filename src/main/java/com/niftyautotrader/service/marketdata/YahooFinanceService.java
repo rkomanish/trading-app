@@ -4,13 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.niftyautotrader.model.Candle;
 import com.niftyautotrader.repository.CandleRepository;
+import io.netty.handler.codec.http.HttpClientCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.ResponseCookie;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -44,7 +44,6 @@ public class YahooFinanceService {
     private static final String UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
     private static final String CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb";
-    private static final String CONSENT_URL = "https://consent.yahoo.com/v2/collectConsent?sessionId=";
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
@@ -56,7 +55,11 @@ public class YahooFinanceService {
     public YahooFinanceService(WebClient.Builder webClientBuilder,
                                 ObjectMapper objectMapper,
                                 CandleRepository candleRepo) {
+        // Increase Netty's max header size to 64 KB — Yahoo Finance sends very large Set-Cookie headers
+        HttpClient httpClient = HttpClient.create()
+            .httpResponseDecoder(spec -> spec.maxHeaderSize(65536));
         this.webClient = webClientBuilder
+            .clientConnector(new ReactorClientHttpConnector(httpClient))
             .defaultHeader("User-Agent", UA)
             .defaultHeader("Accept", "*/*")
             .defaultHeader("Accept-Language", "en-US,en;q=0.9")
@@ -146,44 +149,41 @@ public class YahooFinanceService {
     }
 
     /**
-     * Obtain a Yahoo crumb by fetching the getcrumb endpoint.
-     * Yahoo requires a valid A3 cookie (set by the finance landing page) before the crumb is issued.
-     * We bootstrap by hitting the finance page to collect cookies first.
+     * Obtain a Yahoo crumb. We call the crumb endpoint directly and capture the
+     * Set-Cookie headers it returns — no need to hit the landing page first.
      */
     private synchronized void refreshCrumb() throws Exception {
         log.info("Fetching Yahoo crumb...");
 
-        // Step 1: hit Yahoo Finance landing page to get session cookies
         AtomicReference<String> cookieHolder = new AtomicReference<>("");
-        webClient.get()
-            .uri("https://finance.yahoo.com/")
+        String crumb = webClient.get()
+            .uri(CRUMB_URL)
             .exchangeToMono(res -> {
+                // Capture any cookies the crumb endpoint sets
                 String cookies = res.cookies().values().stream()
                     .flatMap(List::stream)
                     .map(c -> c.getName() + "=" + c.getValue())
                     .collect(Collectors.joining("; "));
-                cookieHolder.set(cookies);
+                if (!cookies.isEmpty()) cookieHolder.set(cookies);
                 return res.bodyToMono(String.class);
             })
-            .timeout(Duration.ofSeconds(10))
+            .timeout(Duration.ofSeconds(15))
             .block();
 
-        String cookie = cookieHolder.get();
-        if (cookie.isEmpty()) {
-            // Fallback: try the consent page to get A3 cookie
-            cookie = "A1=d=AQABBJsGBGQCEPub; A3=d=AQABBJsGBGQCEPub";
+        if (crumb == null || crumb.isBlank() || crumb.startsWith("<")) {
+            // Crumb endpoint returned HTML (consent wall) — try with a minimal cookie
+            log.warn("Crumb endpoint returned non-crumb response, retrying with minimal cookie");
+            cachedCookie = "A1=d=AQABBJsGBGQCEPub; A3=d=AQABBJsGBGQCEPub";
+            crumb = webClient.get()
+                .uri(CRUMB_URL)
+                .header("Cookie", cachedCookie)
+                .retrieve()
+                .bodyToMono(String.class)
+                .timeout(Duration.ofSeconds(15))
+                .block();
+        } else if (!cookieHolder.get().isEmpty()) {
+            cachedCookie = cookieHolder.get();
         }
-        cachedCookie = cookie;
-        log.debug("Yahoo cookies: {}", cookie.substring(0, Math.min(80, cookie.length())));
-
-        // Step 2: fetch the crumb using the cookies
-        String crumb = webClient.get()
-            .uri(CRUMB_URL)
-            .header("Cookie", cachedCookie)
-            .retrieve()
-            .bodyToMono(String.class)
-            .timeout(Duration.ofSeconds(10))
-            .block();
 
         if (crumb == null || crumb.isBlank() || crumb.startsWith("<")) {
             throw new IllegalStateException("Failed to obtain Yahoo crumb (got: " + crumb + ")");
