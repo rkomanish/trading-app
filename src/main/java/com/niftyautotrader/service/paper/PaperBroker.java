@@ -63,9 +63,15 @@ public class PaperBroker implements Broker {
 
     @Override
     public OrderResult placeOrder(OrderRequest request) {
-        BigDecimal marketPrice = getLastPrice(request.getSymbol());
-        if (marketPrice.compareTo(BigDecimal.ZERO) == 0 && request.getLimitPrice() != null) {
+        // Always prefer an explicit limitPrice over a DB lookup.
+        // The DB lookup is stale in paper mode — today's candles may not be imported yet,
+        // causing fills at yesterday's (or older) close price and massive phantom P&L swings.
+        BigDecimal marketPrice;
+        if (request.getLimitPrice() != null
+                && request.getLimitPrice().compareTo(BigDecimal.ZERO) > 0) {
             marketPrice = request.getLimitPrice();
+        } else {
+            marketPrice = getLastPrice(request.getSymbol());
         }
 
         BigDecimal fillPrice = applySlippage(marketPrice, request.getSide());
