@@ -155,28 +155,10 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         double vwap = ctx.currentVwap().doubleValue();
         double price = cC;
 
-        // ── EMA(21) trend over last 20 bars — use 5m if available, else pattern candles ──
-        // Use 20-bar lookback (not 10) — on 1m that's 20 min, on 5m it's 100 min (cleaner)
-        List<Candle> candles5m = ctx.candles5m();
-        List<Candle> trendCandles = (candles5m.size() >= 25) ? candles5m : patternCandles;
-        boolean downtrend = false, uptrend = false;
-        if (trendCandles.size() >= 25) {
-            double[] ct = trendCandles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
-            double[] ema21 = IndicatorUtils.ema(ct, 21);
-            int m = ema21.length;
-            downtrend = ema21[m - 1] < ema21[m - 20];
-            uptrend   = ema21[m - 1] > ema21[m - 20];
-        } else {
-            // Not enough candles for trend filter — allow both directions
-            downtrend = true;
-            uptrend   = true;
-        }
-
-        // ── Volume and RSI from pattern candles ───────────────────────────────
-        double avgVol = avgVolume(patternCandles, 20);
+        // ── RSI — only hard extremes excluded ────────────────────────────────
         double rsi = IndicatorUtils.rsiLast(c1, 14);
 
-        // ── Swing proximity (near N-bar low/high) ─────────────────────────────
+        // ── Swing high/low over lookback (used in reason string only) ─────────
         int lookFrom = Math.max(0, n - swingLookback - 1);
         double swingLow  = Double.MAX_VALUE;
         double swingHigh = Double.MIN_VALUE;
@@ -184,31 +166,26 @@ public class HammerCandlestickStrategy implements TunableStrategy {
             swingLow  = Math.min(swingLow,  patternCandles.get(i).getLow().doubleValue());
             swingHigh = Math.max(swingHigh, patternCandles.get(i).getHigh().doubleValue());
         }
-        double proximityBand = atr * 1.5; // within 1.5×ATR of swing extreme (wider for 1m noise)
-        boolean nearSwingLow  = cL <= swingLow  + proximityBand;
-        boolean nearSwingHigh = cH >= swingHigh - proximityBand;
 
         // ══════════════════════════════════════════════════════════════════════
         //  HAMMER — Bullish reversal → BUY CE
+        //  Core filters: pattern geometry + price below VWAP + RSI not overbought
         // ══════════════════════════════════════════════════════════════════════
-        boolean isHammer = lowerWick >= body * minWickRatio            // long lower wick
-                        && upperWick <= totalRange * maxOtherWickRatio; // tiny upper wick
+        boolean isHammer = lowerWick >= body * minWickRatio
+                        && upperWick <= totalRange * maxOtherWickRatio;
 
-        if (isHammer && nearSwingLow && price < vwap && downtrend) {
-            // Volume surge
-            if (avgVol > 0 && curr.getVolume() < avgVol * volumeMult) return Optional.empty();
-            // RSI: must be in weakened-to-neutral zone — not overbought (>65 would be buying into strength)
-            if (rsi < 15 || rsi > 65) return Optional.empty();
+        if (isHammer && price < vwap) {
+            if (rsi > 70) return Optional.empty(); // don't buy into overbought
+            if (rsi < 10) return Optional.empty(); // extremely oversold = falling knife risk
 
-            double sl    = cL - atr * 0.05;
-            double risk  = price - sl;
-            double tgt   = price + rRRatio * risk;
+            double sl   = cL - atr * 0.05;
+            double risk = price - sl;
+            if (risk <= 0) return Optional.empty();
+            double tgt  = price + rRRatio * risk;
 
             String reason = String.format(
-                "HAMMER nearSwingLow=%.0f lowerWick=%.1f body=%.1f upperWick=%.1f "
-                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA21↓",
-                swingLow, lowerWick, body, upperWick,
-                avgVol > 0 ? curr.getVolume() / avgVol : 0, rsi, vwap);
+                "HAMMER lowerWick=%.1f body=%.1f upperWick=%.1f RSI=%.0f VWAP=%.0f swLow=%.0f",
+                lowerWick, body, upperWick, rsi, vwap, swingLow);
             log.info("[HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
 
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, price, sl, tgt, reason));
@@ -216,24 +193,23 @@ public class HammerCandlestickStrategy implements TunableStrategy {
 
         // ══════════════════════════════════════════════════════════════════════
         //  INVERTED HAMMER — Bearish reversal → BUY PE
+        //  Core filters: pattern geometry + price above VWAP + RSI not oversold
         // ══════════════════════════════════════════════════════════════════════
-        boolean isInvertedHammer = upperWick >= body * minWickRatio            // long upper wick
-                                && lowerWick <= totalRange * maxOtherWickRatio; // tiny lower wick
+        boolean isInvertedHammer = upperWick >= body * minWickRatio
+                                && lowerWick <= totalRange * maxOtherWickRatio;
 
-        if (isInvertedHammer && nearSwingHigh && price > vwap && uptrend) {
-            if (avgVol > 0 && curr.getVolume() < avgVol * volumeMult) return Optional.empty();
-            // RSI: must be in strengthened-to-neutral zone — not oversold (<35 would be shorting weakness)
-            if (rsi < 35 || rsi > 85) return Optional.empty();
+        if (isInvertedHammer && price > vwap) {
+            if (rsi < 30) return Optional.empty(); // don't short into oversold
+            if (rsi > 90) return Optional.empty(); // extremely overbought = momentum still strong
 
             double sl   = cH + atr * 0.05;
             double risk = sl - price;
+            if (risk <= 0) return Optional.empty();
             double tgt  = price - rRRatio * risk;
 
             String reason = String.format(
-                "INV_HAMMER nearSwingHigh=%.0f upperWick=%.1f body=%.1f lowerWick=%.1f "
-                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA21↑",
-                swingHigh, upperWick, body, lowerWick,
-                avgVol > 0 ? curr.getVolume() / avgVol : 0, rsi, vwap);
+                "INV_HAMMER upperWick=%.1f body=%.1f lowerWick=%.1f RSI=%.0f VWAP=%.0f swHigh=%.0f",
+                upperWick, body, lowerWick, rsi, vwap, swingHigh);
             log.info("[INV_HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
 
             return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, price, sl, tgt, reason));
