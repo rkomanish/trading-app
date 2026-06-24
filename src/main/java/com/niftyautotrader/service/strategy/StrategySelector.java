@@ -92,32 +92,35 @@ public class StrategySelector {
 
             // Strong trend: PDH/PDL breakouts accelerate in trending days.
             // MACD strong signal in high-ADX regime. BB squeeze catches volatility bursts.
-            // Gap momentum still valid until 11:30.
+            // Hammer/Inverted Hammer at swing highs/lows provide exhaustion reversals.
             case STRONG_TREND -> List.of(
                 "PDH_PDL_BREAKOUT",
                 "MACD_CROSSOVER",
                 "BOLLINGER_SQUEEZE_BREAKOUT",
-                "GAP_MOMENTUM"
+                "GAP_MOMENTUM",
+                "HAMMER_CANDLESTICK"
             ).contains(name);
 
             // Moderate trend: PDH/PDL works in all regimes (institutional levels).
             // MACD and EMA crossovers work in moderate trends.
-            // Candlestick pattern engulfing signals trend continuation at key levels.
+            // Candlestick engulfing and Hammer reversals fire at key turning points.
             case MODERATE_TREND -> List.of(
                 "PDH_PDL_BREAKOUT",
                 "MACD_CROSSOVER",
                 "EMA_CROSSOVER_9_21",
                 "BOLLINGER_SQUEEZE_BREAKOUT",
-                "CANDLESTICK_PATTERN"
+                "CANDLESTICK_PATTERN",
+                "HAMMER_CANDLESTICK"
             ).contains(name);
 
             // Ranging: PDH/PDL still fires on breakouts even in ranging days.
             // BB squeeze catches the eventual volatility expansion.
-            // Candlestick engulfing at VWAP works well in ranging/mean-reverting markets.
+            // Hammer/Inverted Hammer excels in ranging markets — reversals from range extremes.
             case RANGING -> List.of(
                 "PDH_PDL_BREAKOUT",
                 "BOLLINGER_SQUEEZE_BREAKOUT",
-                "CANDLESTICK_PATTERN"
+                "CANDLESTICK_PATTERN",
+                "HAMMER_CANDLESTICK"
             ).contains(name);
         };
     }
