@@ -109,8 +109,13 @@ public class BacktestEngine {
         LocalDate lastTradeDate = null;
         int lastTradeBar = -1;
 
+        // Cooldown: 5 bars after a trade (25min on 5m, 5min on 1m) — keeps signal separation
+        // without starving reversal strategies that fire multiple times per day.
+        int cooldownBars = strategy.getName().contains("BREAKOUT")
+                        || strategy.getName().contains("GAP_MOMENTUM")
+                        || strategy.getName().contains("PDH_PDL") ? 30 : 5;
         for (int i = warmup; i < candles.size() - 1; i++) {
-            if (lastTradeBar >= 0 && (i - lastTradeBar) < 30) continue;
+            if (lastTradeBar >= 0 && (i - lastTradeBar) < cooldownBars) continue;
 
             List<Candle> slice = candles.subList(0, i + 1);
             MarketContext ctx = buildBacktestContext(slice);

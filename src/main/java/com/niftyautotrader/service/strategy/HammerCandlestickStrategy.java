@@ -67,7 +67,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
     private final double swingProximity;    // pattern candle extreme must be within this × ATR of swing extreme
 
     public HammerCandlestickStrategy() {
-        this(1.5, 0.25, 2.0, 20, 1.0);
+        this(1.2, 0.30, 2.0, 10, 2.0);
     }
 
     private HammerCandlestickStrategy(double minWickRatio, double maxOtherWickRatio,
@@ -95,10 +95,10 @@ public class HammerCandlestickStrategy implements TunableStrategy {
     @Override
     public Map<String, double[]> paramGrid() {
         return Map.of(
-            "minWickRatio",      new double[]{1.2, 1.5, 2.0},
-            "maxOtherWickRatio", new double[]{0.20, 0.25, 0.35},
+            "minWickRatio",      new double[]{1.0, 1.2, 1.5},
+            "maxOtherWickRatio", new double[]{0.25, 0.30, 0.40},
             "rRRatio",           new double[]{1.5, 2.0, 2.5},
-            "swingProximity",    new double[]{0.5, 1.0, 1.5}
+            "swingProximity",    new double[]{1.5, 2.0, 3.0}
         );
     }
 
