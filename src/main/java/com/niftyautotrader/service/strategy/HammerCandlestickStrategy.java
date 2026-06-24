@@ -20,30 +20,31 @@ import java.util.Optional;
 /**
  * Hammer / Inverted Hammer reversal strategy on 1-minute Nifty candles.
  *
- *  Hammer (bullish reversal)
- *   – spotted near a recent swing LOW (price near N-bar min)
+ *  Hammer (bullish reversal at a swing LOW)
+ *   – the pattern candle's low is within swingProximity × ATR of the N-bar swing low
  *   – lower wick ≥ minWickRatio × body  (long tail below, body near top)
- *   – upper wick ≤ maxUpperWickRatio × total range  (almost no upper shadow)
- *   – confirms the buying pressure: sellers tried to push it down but failed
+ *   – upper wick ≤ maxOtherWickRatio × total range  (almost no upper shadow)
+ *   – sellers pushed price down hard but buyers brought it back → bullish reversal
  *   → BUY CE
  *
- *  Inverted Hammer (bearish reversal)
- *   – spotted near a recent swing HIGH (price near N-bar max)
+ *  Inverted Hammer (bearish reversal at a swing HIGH)
+ *   – the pattern candle's high is within swingProximity × ATR of the N-bar swing high
  *   – upper wick ≥ minWickRatio × body  (long tail above, body near bottom)
- *   – lower wick ≤ maxUpperWickRatio × total range  (almost no lower shadow)
- *   – confirms selling pressure at high: buyers tried to push up but failed
+ *   – lower wick ≤ maxOtherWickRatio × total range  (almost no lower shadow)
+ *   – buyers pushed price up hard but sellers brought it back → bearish reversal
  *   → BUY PE
  *
- * Additional filters applied to every signal:
- *   1. Time: 9:45 – 14:30 IST only
- *   2. VWAP bias: Hammer only when price < VWAP (depressed), Inverted Hammer only when price > VWAP
- *   3. EMA(9) trend on 5m candles: Hammer requires short-term downtrend, Inv-Hammer requires uptrend
- *   4. Volume: pattern candle volume > volumeMult × 20-bar average on 1m
- *   5. RSI(14) on 1m closes: Hammer 25–50, Inverted Hammer 50–75  (reversal zones)
- *   6. Minimum candle range: ≥ 0.15 × ATR so we're not trading noise
- *   7. Body must be non-doji: ≥ 0.05 × ATR
+ * Swing proximity is the key filter: pattern must occur AT the swing extreme
+ * (within swingProximity × ATR), not just anywhere in the price range.
+ * This matches the manual backtesting approach — ZigZag swing point + hammer shape.
  *
- * SL = extreme of the pattern candle (low for Hammer, high for Inv-Hammer) ± 0.05 × ATR buffer.
+ * Additional guards:
+ *   1. Time: 9:45 – 14:30 IST only
+ *   2. RSI(14): Hammer RSI < 70 (not overbought), Inverted Hammer RSI > 30 (not oversold)
+ *   3. Minimum candle range: ≥ 0.08 × ATR so we're not trading micro-noise
+ *   4. Body must be non-doji: ≥ 0.03 × ATR
+ *
+ * SL = extreme of the pattern candle (low for Hammer, high for Inv-Hammer) − 0.05 × ATR buffer.
  * Target = rRRatio × risk from entry.
  */
 @Component
@@ -61,21 +62,21 @@ public class HammerCandlestickStrategy implements TunableStrategy {
 
     private final double minWickRatio;      // lower/upper wick >= this × body size
     private final double maxOtherWickRatio; // opposite wick <= this × total range
-    private final double volumeMult;        // pattern volume > avgVol × this
     private final double rRRatio;           // reward:risk ratio
-    private final int    swingLookback;     // bars to detect swing high/low proximity
+    private final int    swingLookback;     // bars to look back for swing high/low
+    private final double swingProximity;    // pattern candle extreme must be within this × ATR of swing extreme
 
     public HammerCandlestickStrategy() {
-        this(1.5, 0.25, 1.5, 2.0, 20);
+        this(1.5, 0.25, 2.0, 20, 1.0);
     }
 
     private HammerCandlestickStrategy(double minWickRatio, double maxOtherWickRatio,
-                                       double volumeMult, double rRRatio, int swingLookback) {
+                                       double rRRatio, int swingLookback, double swingProximity) {
         this.minWickRatio      = minWickRatio;
         this.maxOtherWickRatio = maxOtherWickRatio;
-        this.volumeMult        = volumeMult;
         this.rRRatio           = rRRatio;
         this.swingLookback     = swingLookback;
+        this.swingProximity    = swingProximity;
     }
 
     @Override public String getName() { return NAME; }
@@ -85,9 +86,9 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         return Map.of(
             "minWickRatio",      minWickRatio,
             "maxOtherWickRatio", maxOtherWickRatio,
-            "volumeMult",        volumeMult,
             "rRRatio",           rRRatio,
-            "swingLookback",     (double) swingLookback
+            "swingLookback",     (double) swingLookback,
+            "swingProximity",    swingProximity
         );
     }
 
@@ -96,7 +97,8 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         return Map.of(
             "minWickRatio",      new double[]{1.2, 1.5, 2.0},
             "maxOtherWickRatio", new double[]{0.20, 0.25, 0.35},
-            "rRRatio",           new double[]{1.5, 2.0, 2.5}
+            "rRRatio",           new double[]{1.5, 2.0, 2.5},
+            "swingProximity",    new double[]{0.5, 1.0, 1.5}
         );
     }
 
@@ -105,9 +107,9 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         return new HammerCandlestickStrategy(
             p.getOrDefault("minWickRatio",      minWickRatio),
             p.getOrDefault("maxOtherWickRatio", maxOtherWickRatio),
-            p.getOrDefault("volumeMult",        volumeMult),
             p.getOrDefault("rRRatio",           rRRatio),
-            p.getOrDefault("swingLookback",     (double) swingLookback).intValue()
+            p.getOrDefault("swingLookback",     (double) swingLookback).intValue(),
+            p.getOrDefault("swingProximity",    swingProximity)
         );
     }
 
@@ -152,82 +154,80 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         if (body  < atr * 0.03)  return Optional.empty();
         if (totalRange < atr * 0.08) return Optional.empty();
 
-        double vwap = ctx.currentVwap().doubleValue();
-        double price = cC;
-
-        // ── RSI — only hard extremes excluded ────────────────────────────────
         double rsi = IndicatorUtils.rsiLast(c1, 14);
 
-        // ── Swing high/low over lookback (used in reason string only) ─────────
+        // ── Swing high/low over lookback bars (excluding current candle) ──────
+        // The pattern candle must sit AT the swing extreme, not in the middle of a range.
         int lookFrom = Math.max(0, n - swingLookback - 1);
         double swingLow  = Double.MAX_VALUE;
-        double swingHigh = Double.MIN_VALUE;
+        double swingHigh = -Double.MAX_VALUE;
         for (int i = lookFrom; i < n - 1; i++) {
             swingLow  = Math.min(swingLow,  patternCandles.get(i).getLow().doubleValue());
             swingHigh = Math.max(swingHigh, patternCandles.get(i).getHigh().doubleValue());
         }
 
+        // Proximity check: current candle's extreme must be within swingProximity × ATR
+        // of the recent swing extreme — this is the ZigZag-at-extreme filter.
+        boolean nearSwingLow  = (cL - swingLow)  <= atr * swingProximity;
+        boolean nearSwingHigh = (swingHigh - cH) <= atr * swingProximity;
+
         // ══════════════════════════════════════════════════════════════════════
-        //  HAMMER — Bullish reversal → BUY CE
-        //  Core filters: pattern geometry + price below VWAP + RSI not overbought
+        //  HAMMER at swing LOW — Bullish reversal → BUY CE
+        //  Long lower wick shows sellers failed; price at recent swing low.
         // ══════════════════════════════════════════════════════════════════════
         boolean isHammer = lowerWick >= body * minWickRatio
                         && upperWick <= totalRange * maxOtherWickRatio;
 
-        if (isHammer) log.debug("HAMMER-GEOM detected {} price={} vwap={} rsi={}", curr.getOpenTime(), price, vwap, rsi);
-        if (isHammer && price < vwap) {
-            if (rsi > 70) return Optional.empty(); // don't buy into overbought
-            if (rsi < 10) return Optional.empty(); // extremely oversold = falling knife risk
+        log.debug("HAMMER-EVAL {} nearLow={} isHammer={} lowerWick={} body={} RSI={}",
+            curr.getOpenTime(), nearSwingLow, isHammer,
+            String.format("%.1f", lowerWick), String.format("%.1f", body), String.format("%.0f", rsi));
+
+        if (isHammer && nearSwingLow) {
+            if (rsi > 70) return Optional.empty(); // already overbought — not a reversal setup
+            if (rsi < 10) return Optional.empty(); // free-falling, not a hammer reversal
 
             double sl   = cL - atr * 0.05;
-            double risk = price - sl;
+            double risk = cC - sl;
             if (risk <= 0) return Optional.empty();
-            double tgt  = price + rRRatio * risk;
+            double tgt  = cC + rRRatio * risk;
 
             String reason = String.format(
-                "HAMMER lowerWick=%.1f body=%.1f upperWick=%.1f RSI=%.0f VWAP=%.0f swLow=%.0f",
-                lowerWick, body, upperWick, rsi, vwap, swingLow);
+                "HAMMER@SwingLow lowerWick=%.1f body=%.1f upperWick=%.1f RSI=%.0f swLow=%.0f proximity=%.1fpts",
+                lowerWick, body, upperWick, rsi, swingLow, cL - swingLow);
             log.info("[HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
 
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, price, sl, tgt, reason));
+            return Optional.of(buildSignal(ctx, SignalDirection.LONG_CE, cC, sl, tgt, reason));
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        //  INVERTED HAMMER — Bearish reversal → BUY PE
-        //  Core filters: pattern geometry + price above VWAP + RSI not oversold
+        //  INVERTED HAMMER at swing HIGH — Bearish reversal → BUY PE
+        //  Long upper wick shows buyers failed; price at recent swing high.
         // ══════════════════════════════════════════════════════════════════════
         boolean isInvertedHammer = upperWick >= body * minWickRatio
                                 && lowerWick <= totalRange * maxOtherWickRatio;
 
-        if (isInvertedHammer) log.debug("INV-HAMMER-GEOM detected {} price={} vwap={} rsi={}", curr.getOpenTime(), price, vwap, rsi);
-        if (isInvertedHammer && price > vwap) {
-            if (rsi < 30) return Optional.empty(); // don't short into oversold
-            if (rsi > 90) return Optional.empty(); // extremely overbought = momentum still strong
+        log.debug("INV-HAMMER-EVAL {} nearHigh={} isInvHammer={} upperWick={} body={} RSI={}",
+            curr.getOpenTime(), nearSwingHigh, isInvertedHammer,
+            String.format("%.1f", upperWick), String.format("%.1f", body), String.format("%.0f", rsi));
+
+        if (isInvertedHammer && nearSwingHigh) {
+            if (rsi < 30) return Optional.empty(); // already oversold — not a reversal setup
+            if (rsi > 90) return Optional.empty(); // momentum still strong, not yet rejecting
 
             double sl   = cH + atr * 0.05;
-            double risk = sl - price;
+            double risk = sl - cC;
             if (risk <= 0) return Optional.empty();
-            double tgt  = price - rRRatio * risk;
+            double tgt  = cC - rRRatio * risk;
 
             String reason = String.format(
-                "INV_HAMMER upperWick=%.1f body=%.1f lowerWick=%.1f RSI=%.0f VWAP=%.0f swHigh=%.0f",
-                upperWick, body, lowerWick, rsi, vwap, swingHigh);
+                "INV_HAMMER@SwingHigh upperWick=%.1f body=%.1f lowerWick=%.1f RSI=%.0f swHigh=%.0f proximity=%.1fpts",
+                upperWick, body, lowerWick, rsi, swingHigh, swingHigh - cH);
             log.info("[INV_HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
 
-            return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, price, sl, tgt, reason));
+            return Optional.of(buildSignal(ctx, SignalDirection.LONG_PE, cC, sl, tgt, reason));
         }
 
         return Optional.empty();
-    }
-
-    private double avgVolume(List<Candle> candles, int lookback) {
-        int n = candles.size();
-        int from = Math.max(0, n - lookback - 1);
-        long sum = 0; int count = 0;
-        for (int i = from; i < n - 1; i++) {
-            sum += candles.get(i).getVolume(); count++;
-        }
-        return count == 0 ? 0 : (double) sum / count;
     }
 
     private Signal buildSignal(MarketContext ctx, SignalDirection dir, double entry,
