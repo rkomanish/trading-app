@@ -56,8 +56,8 @@ public class HammerCandlestickStrategy implements TunableStrategy {
     private static final LocalTime END   = LocalTime.of(14, 30);
     private static final String NAME     = "HAMMER_CANDLESTICK";
 
-    // minimum number of 1m candles needed (EMA warmup + swing lookback)
-    private static final int MIN_CANDLES = 60;
+    // minimum number of candles needed (EMA warmup + swing lookback)
+    private static final int MIN_CANDLES = 30;
 
     private final double minWickRatio;      // lower/upper wick >= this × body size
     private final double maxOtherWickRatio; // opposite wick <= this × total range
@@ -155,16 +155,21 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         double vwap = ctx.currentVwap().doubleValue();
         double price = cC;
 
-        // ── EMA(9) trend: use 5m candles if available, otherwise use the pattern candles ──
+        // ── EMA(21) trend over last 20 bars — use 5m if available, else pattern candles ──
+        // Use 20-bar lookback (not 10) — on 1m that's 20 min, on 5m it's 100 min (cleaner)
         List<Candle> candles5m = ctx.candles5m();
-        List<Candle> trendCandles = (candles5m.size() >= 15) ? candles5m : patternCandles;
-        boolean downtrend5m = false, uptrend5m = false;
-        if (trendCandles.size() >= 15) {
+        List<Candle> trendCandles = (candles5m.size() >= 25) ? candles5m : patternCandles;
+        boolean downtrend = false, uptrend = false;
+        if (trendCandles.size() >= 25) {
             double[] ct = trendCandles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
-            double[] ema9 = IndicatorUtils.ema(ct, 9);
-            int m = ema9.length;
-            downtrend5m = ema9[m - 1] < ema9[m - 10];
-            uptrend5m   = ema9[m - 1] > ema9[m - 10];
+            double[] ema21 = IndicatorUtils.ema(ct, 21);
+            int m = ema21.length;
+            downtrend = ema21[m - 1] < ema21[m - 20];
+            uptrend   = ema21[m - 1] > ema21[m - 20];
+        } else {
+            // Not enough candles for trend filter — allow both directions
+            downtrend = true;
+            uptrend   = true;
         }
 
         // ── Volume and RSI from pattern candles ───────────────────────────────
@@ -179,7 +184,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
             swingLow  = Math.min(swingLow,  patternCandles.get(i).getLow().doubleValue());
             swingHigh = Math.max(swingHigh, patternCandles.get(i).getHigh().doubleValue());
         }
-        double proximityBand = atr * 0.5; // within half-ATR of swing extreme
+        double proximityBand = atr * 1.5; // within 1.5×ATR of swing extreme (wider for 1m noise)
         boolean nearSwingLow  = cL <= swingLow  + proximityBand;
         boolean nearSwingHigh = cH >= swingHigh - proximityBand;
 
@@ -189,11 +194,11 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         boolean isHammer = lowerWick >= body * minWickRatio            // long lower wick
                         && upperWick <= totalRange * maxOtherWickRatio; // tiny upper wick
 
-        if (isHammer && nearSwingLow && price < vwap && downtrend5m) {
+        if (isHammer && nearSwingLow && price < vwap && downtrend) {
             // Volume surge
             if (avgVol > 0 && curr.getVolume() < avgVol * volumeMult) return Optional.empty();
-            // RSI in oversold-to-neutral zone (reversal zone)
-            if (rsi < 20 || rsi > 52) return Optional.empty();
+            // RSI: must be in weakened-to-neutral zone — not overbought (>65 would be buying into strength)
+            if (rsi < 15 || rsi > 65) return Optional.empty();
 
             double sl    = cL - atr * 0.05;
             double risk  = price - sl;
@@ -201,7 +206,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
 
             String reason = String.format(
                 "HAMMER nearSwingLow=%.0f lowerWick=%.1f body=%.1f upperWick=%.1f "
-                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA9↓",
+                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA21↓",
                 swingLow, lowerWick, body, upperWick,
                 avgVol > 0 ? curr.getVolume() / avgVol : 0, rsi, vwap);
             log.info("[HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
@@ -215,10 +220,10 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         boolean isInvertedHammer = upperWick >= body * minWickRatio            // long upper wick
                                 && lowerWick <= totalRange * maxOtherWickRatio; // tiny lower wick
 
-        if (isInvertedHammer && nearSwingHigh && price > vwap && uptrend5m) {
+        if (isInvertedHammer && nearSwingHigh && price > vwap && uptrend) {
             if (avgVol > 0 && curr.getVolume() < avgVol * volumeMult) return Optional.empty();
-            // RSI in overbought-to-neutral zone
-            if (rsi < 48 || rsi > 80) return Optional.empty();
+            // RSI: must be in strengthened-to-neutral zone — not oversold (<35 would be shorting weakness)
+            if (rsi < 35 || rsi > 85) return Optional.empty();
 
             double sl   = cH + atr * 0.05;
             double risk = sl - price;
@@ -226,7 +231,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
 
             String reason = String.format(
                 "INV_HAMMER nearSwingHigh=%.0f upperWick=%.1f body=%.1f lowerWick=%.1f "
-                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA9↑",
+                + "vol=%.1fx RSI=%.0f VWAP=%.0f EMA21↑",
                 swingHigh, upperWick, body, lowerWick,
                 avgVol > 0 ? curr.getVolume() / avgVol : 0, rsi, vwap);
             log.info("[INV_HAMMER] {} O={} H={} L={} C={} — {}", curr.getOpenTime(), cO, cH, cL, cC, reason);
