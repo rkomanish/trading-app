@@ -66,7 +66,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
     private final int    swingLookback;     // bars to detect swing high/low proximity
 
     public HammerCandlestickStrategy() {
-        this(2.0, 0.15, 1.5, 2.0, 20);
+        this(1.5, 0.25, 1.5, 2.0, 20);
     }
 
     private HammerCandlestickStrategy(double minWickRatio, double maxOtherWickRatio,
@@ -94,8 +94,8 @@ public class HammerCandlestickStrategy implements TunableStrategy {
     @Override
     public Map<String, double[]> paramGrid() {
         return Map.of(
-            "minWickRatio",      new double[]{1.5, 2.0, 2.5},
-            "maxOtherWickRatio", new double[]{0.10, 0.15, 0.20},
+            "minWickRatio",      new double[]{1.2, 1.5, 2.0},
+            "maxOtherWickRatio", new double[]{0.20, 0.25, 0.35},
             "rRRatio",           new double[]{1.5, 2.0, 2.5}
         );
     }
@@ -149,8 +149,8 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         double lowerWick  = bodyBottom - cL;
 
         // Reject doji (body too small) and noise candles (range too small)
-        if (body  < atr * 0.05)  return Optional.empty();
-        if (totalRange < atr * 0.15) return Optional.empty();
+        if (body  < atr * 0.03)  return Optional.empty();
+        if (totalRange < atr * 0.08) return Optional.empty();
 
         double vwap = ctx.currentVwap().doubleValue();
         double price = cC;
@@ -174,6 +174,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         boolean isHammer = lowerWick >= body * minWickRatio
                         && upperWick <= totalRange * maxOtherWickRatio;
 
+        if (isHammer) log.debug("HAMMER-GEOM detected {} price={} vwap={} rsi={}", curr.getOpenTime(), price, vwap, rsi);
         if (isHammer && price < vwap) {
             if (rsi > 70) return Optional.empty(); // don't buy into overbought
             if (rsi < 10) return Optional.empty(); // extremely oversold = falling knife risk
@@ -198,6 +199,7 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         boolean isInvertedHammer = upperWick >= body * minWickRatio
                                 && lowerWick <= totalRange * maxOtherWickRatio;
 
+        if (isInvertedHammer) log.debug("INV-HAMMER-GEOM detected {} price={} vwap={} rsi={}", curr.getOpenTime(), price, vwap, rsi);
         if (isInvertedHammer && price > vwap) {
             if (rsi < 30) return Optional.empty(); // don't short into oversold
             if (rsi > 90) return Optional.empty(); // extremely overbought = momentum still strong
