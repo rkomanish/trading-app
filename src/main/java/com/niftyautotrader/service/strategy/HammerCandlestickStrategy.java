@@ -116,20 +116,22 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         LocalTime now = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalTime();
         if (now.isBefore(START) || now.isAfter(END)) return Optional.empty();
 
+        // Use 1m candles when available (live trading), fall back to 5m for backtesting
         List<Candle> candles1m = ctx.candles1m();
-        if (candles1m.size() < MIN_CANDLES) return Optional.empty();
+        List<Candle> patternCandles = (!candles1m.isEmpty()) ? candles1m : ctx.candles5m();
+        if (patternCandles.size() < MIN_CANDLES) return Optional.empty();
 
-        // ATR from 1m data for meaningful-range filters
-        int n = candles1m.size();
-        double[] h1 = candles1m.stream().mapToDouble(c -> c.getHigh().doubleValue()).toArray();
-        double[] l1 = candles1m.stream().mapToDouble(c -> c.getLow().doubleValue()).toArray();
-        double[] c1 = candles1m.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
+        // ATR and OHLCV arrays from pattern candles
+        int n = patternCandles.size();
+        double[] h1 = patternCandles.stream().mapToDouble(c -> c.getHigh().doubleValue()).toArray();
+        double[] l1 = patternCandles.stream().mapToDouble(c -> c.getLow().doubleValue()).toArray();
+        double[] c1 = patternCandles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
 
         double atr = IndicatorUtils.atrLast(h1, l1, c1, 14);
         if (atr <= 0) return Optional.empty();
 
-        // Current 1m candle (the pattern candle)
-        Candle curr = candles1m.get(n - 1);
+        // Current candle (the pattern candle)
+        Candle curr = patternCandles.get(n - 1);
         LocalDate today = ctx.evaluatedAt().withZoneSameInstant(IST).toLocalDate();
         if (!curr.getOpenTime().withZoneSameInstant(IST).toLocalDate().equals(today))
             return Optional.empty();
@@ -153,21 +155,20 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         double vwap = ctx.currentVwap().doubleValue();
         double price = cC;
 
-        // ── EMA(9) trend direction from 5m candles ─────────────────────────────
+        // ── EMA(9) trend: use 5m candles if available, otherwise use the pattern candles ──
         List<Candle> candles5m = ctx.candles5m();
+        List<Candle> trendCandles = (candles5m.size() >= 15) ? candles5m : patternCandles;
         boolean downtrend5m = false, uptrend5m = false;
-        if (candles5m.size() >= 15) {
-            double[] c5 = candles5m.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
-            double[] ema9 = IndicatorUtils.ema(c5, 9);
+        if (trendCandles.size() >= 15) {
+            double[] ct = trendCandles.stream().mapToDouble(c -> c.getClose().doubleValue()).toArray();
+            double[] ema9 = IndicatorUtils.ema(ct, 9);
             int m = ema9.length;
-            downtrend5m = ema9[m - 1] < ema9[m - 10]; // falling EMA over last 10 bars
+            downtrend5m = ema9[m - 1] < ema9[m - 10];
             uptrend5m   = ema9[m - 1] > ema9[m - 10];
         }
 
-        // ── Volume filter on 1m ────────────────────────────────────────────────
-        double avgVol = avgVolume(candles1m, 20);
-
-        // ── RSI on 1m closes ──────────────────────────────────────────────────
+        // ── Volume and RSI from pattern candles ───────────────────────────────
+        double avgVol = avgVolume(patternCandles, 20);
         double rsi = IndicatorUtils.rsiLast(c1, 14);
 
         // ── Swing proximity (near N-bar low/high) ─────────────────────────────
@@ -175,8 +176,8 @@ public class HammerCandlestickStrategy implements TunableStrategy {
         double swingLow  = Double.MAX_VALUE;
         double swingHigh = Double.MIN_VALUE;
         for (int i = lookFrom; i < n - 1; i++) {
-            swingLow  = Math.min(swingLow,  candles1m.get(i).getLow().doubleValue());
-            swingHigh = Math.max(swingHigh, candles1m.get(i).getHigh().doubleValue());
+            swingLow  = Math.min(swingLow,  patternCandles.get(i).getLow().doubleValue());
+            swingHigh = Math.max(swingHigh, patternCandles.get(i).getHigh().doubleValue());
         }
         double proximityBand = atr * 0.5; // within half-ATR of swing extreme
         boolean nearSwingLow  = cL <= swingLow  + proximityBand;
