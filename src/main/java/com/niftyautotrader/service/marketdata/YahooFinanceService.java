@@ -20,18 +20,20 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 /**
- * Fetches historical candles from Yahoo Finance's public chart API.
+ * Fetches historical OHLCV candles from Yahoo Finance's chart API (v8).
  * Used to seed backtest data — NOT for live trading decisions.
  *
- * Yahoo symbol for Nifty 50 index: ^NSEI
- * Intraday limits: 1m data last 7 days only; 5m/15m up to 60 days.
+ * Authentication strategy (crumb-free):
+ *   Yahoo Finance's v8 chart endpoint accepts period1/period2 Unix timestamps and
+ *   does NOT require a crumb when the right browser headers (Referer, Accept) are set.
+ *   The crumb is only needed for the range-based endpoint, which Yahoo now protects.
  *
- * Yahoo Finance now requires a crumb + cookie for all chart requests.
- * We fetch the crumb once and cache it; re-fetch on 401/403/422.
+ * Yahoo intraday data limits (hard limits from their API):
+ *   1m  → max last 7 days
+ *   5m  → max last 60 days
+ *   15m → max last 60 days
  */
 @Service
 public class YahooFinanceService {
@@ -40,28 +42,31 @@ public class YahooFinanceService {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final DateTimeFormatter CSV_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    private static final String UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
-    private static final String CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb";
+    // Yahoo API interval limits in days
+    private static final int MAX_DAYS_1M  = 7;
+    private static final int MAX_DAYS_5M  = 60;
+    private static final int MAX_DAYS_15M = 60;
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final CandleRepository candleRepo;
 
-    private volatile String cachedCrumb = null;
-    private volatile String cachedCookie = null;
-
     public YahooFinanceService(WebClient.Builder webClientBuilder,
                                 ObjectMapper objectMapper,
                                 CandleRepository candleRepo) {
-        // Increase Netty's max header size to 64 KB — Yahoo Finance sends very large Set-Cookie headers
         HttpClient httpClient = HttpClient.create()
+            .followRedirect(true)
             .httpResponseDecoder(spec -> spec.maxHeaderSize(65536));
+
         this.webClient = webClientBuilder
             .clientConnector(new ReactorClientHttpConnector(httpClient))
-            .defaultHeader("User-Agent", UA)
-            .defaultHeader("Accept", "*/*")
+            .defaultHeader("User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+            .defaultHeader("Accept", "application/json, text/plain, */*")
             .defaultHeader("Accept-Language", "en-US,en;q=0.9")
+            .defaultHeader("Referer", "https://finance.yahoo.com/")
+            .defaultHeader("Origin", "https://finance.yahoo.com")
             .codecs(c -> c.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
             .build();
         this.objectMapper = objectMapper;
@@ -75,43 +80,35 @@ public class YahooFinanceService {
     /**
      * Fetch candles from Yahoo and save them to the candle table.
      *
-     * @param yahooSymbol e.g. "^NSEI" for Nifty 50
-     * @param appSymbol   symbol stored in our DB, e.g. "NIFTY"
-     * @param interval    "1m", "5m", "15m"
-     * @param range       "7d", "1mo", "3mo", "60d" (Yahoo range strings)
+     * @param yahooSymbol  e.g. "^NSEI" for Nifty 50
+     * @param appSymbol    symbol stored in our DB, e.g. "NIFTY"
+     * @param interval     "1m", "5m", "15m"
+     * @param range        "7d", "1mo", "3mo", "60d" — converted to period1/period2 timestamps
      */
     public FetchResult fetchAndStore(String yahooSymbol, String appSymbol,
                                       String interval, String range) {
-        // 1m data is only available for the last 7 days — cap silently
-        if ("1m".equals(interval) && !range.equals("7d") && !range.equals("5d")) {
-            log.info("Capping 1m range to 7d (Yahoo limit)");
-            range = "7d";
-        }
-
         List<Candle> candles = null;
         Exception lastError = null;
-        for (int attempt = 0; attempt < 4; attempt++) {
+
+        for (int attempt = 0; attempt < 3; attempt++) {
             try {
-                if (cachedCrumb == null) {
-                    refreshCrumb();
-                }
-                candles = fetchWithCrumb(yahooSymbol, appSymbol, interval, range);
+                candles = fetch(yahooSymbol, appSymbol, interval, range);
                 lastError = null;
                 break;
             } catch (Exception e) {
                 lastError = e;
                 log.warn("Yahoo fetch attempt {} failed: {} — retrying", attempt + 1, e.getMessage());
-                // Force crumb refresh on auth errors
-                cachedCrumb = null;
-                cachedCookie = null;
-                if (attempt < 3) {
-                    try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                if (attempt < 2) {
+                    try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
             }
         }
+
         if (candles == null) {
             String msg = lastError != null ? lastError.getMessage() : "unknown";
-            log.error("Yahoo fetch failed after 4 attempts: {}", msg);
+            log.error("Yahoo fetch failed after 3 attempts: {}", msg);
             return new FetchResult(0, 0, 0, "Yahoo fetch failed: " + msg);
         }
 
@@ -130,11 +127,10 @@ public class YahooFinanceService {
         return new FetchResult(candles.size(), saved, duplicates, null);
     }
 
-    /** Fetch candles and render them as CSV in our standard import format. */
+    /** Fetch candles and render them as CSV. */
     public String fetchAsCsv(String yahooSymbol, String appSymbol,
                               String interval, String range) throws Exception {
-        if (cachedCrumb == null) refreshCrumb();
-        List<Candle> candles = fetchWithCrumb(yahooSymbol, appSymbol, interval, range);
+        List<Candle> candles = fetch(yahooSymbol, appSymbol, interval, range);
         StringBuilder sb = new StringBuilder("timestamp,open,high,low,close,volume\n");
         for (Candle c : candles) {
             sb.append(c.getOpenTime().format(CSV_TS)).append(',')
@@ -147,78 +143,49 @@ public class YahooFinanceService {
         return sb.toString();
     }
 
-    /**
-     * Obtain a Yahoo crumb. Must bootstrap session cookies from finance.yahoo.com first —
-     * the crumb endpoint returns "Invalid Cookie" without them.
-     */
-    private synchronized void refreshCrumb() throws Exception {
-        log.info("Fetching Yahoo session cookies...");
+    private List<Candle> fetch(String yahooSymbol, String appSymbol,
+                                String interval, String range) throws Exception {
+        long period2 = Instant.now().getEpochSecond();
+        long period1 = period2 - rangeToDays(interval, range) * 86400L;
 
-        // Step 1: hit Yahoo Finance to get session cookies (A1/A3 etc.)
-        // The 64 KB maxHeaderSize set in the constructor handles Yahoo's large Set-Cookie headers.
-        AtomicReference<String> cookieHolder = new AtomicReference<>("");
-        webClient.get()
-            .uri("https://finance.yahoo.com/")
-            .exchangeToMono(res -> {
-                String cookies = res.cookies().values().stream()
-                    .flatMap(List::stream)
-                    .map(c -> c.getName() + "=" + c.getValue())
-                    .collect(Collectors.joining("; "));
-                cookieHolder.set(cookies);
-                return res.bodyToMono(String.class).then();
-            })
-            .timeout(Duration.ofSeconds(15))
-            .block();
+        log.info("Fetching Yahoo {} {} (period1={}, period2={}) symbol={}",
+            interval, range, period1, period2, yahooSymbol);
 
-        cachedCookie = cookieHolder.get().isEmpty()
-            ? "A1=d=AQABBJsGBGQCEPub; A3=d=AQABBJsGBGQCEPub"  // fallback
-            : cookieHolder.get();
-        log.debug("Yahoo cookies ({}): {}...", cachedCookie.length(),
-            cachedCookie.substring(0, Math.min(60, cachedCookie.length())));
-
-        // Step 2: fetch crumb with the session cookies
-        String crumb = webClient.get()
-            .uri(CRUMB_URL)
-            .header("Cookie", cachedCookie)
-            .retrieve()
-            .bodyToMono(String.class)
-            .timeout(Duration.ofSeconds(15))
-            .block();
-
-        if (!isValidCrumb(crumb)) {
-            throw new IllegalStateException("Failed to obtain Yahoo crumb (got: " + crumb + ")");
+        // Try query1 first, fall back to query2 on failure
+        String body = null;
+        Exception firstEx = null;
+        for (String host : new String[]{"query1.finance.yahoo.com", "query2.finance.yahoo.com"}) {
+            try {
+                final long p1 = period1, p2 = period2;
+                body = webClient.get()
+                    .uri(uri -> uri.scheme("https").host(host)
+                        .path("/v8/finance/chart/{symbol}")
+                        .queryParam("period1", p1)
+                        .queryParam("period2", p2)
+                        .queryParam("interval", interval)
+                        .queryParam("includePrePost", "false")
+                        .queryParam("events", "div,splits")
+                        .build(yahooSymbol))
+                    .retrieve()
+                    .onStatus(s -> s.is4xxClientError() || s.is5xxServerError(),
+                        res -> res.bodyToMono(String.class).map(err ->
+                            new RuntimeException("Yahoo HTTP " + res.statusCode().value()
+                                + " from " + host + ": " + err.substring(0, Math.min(200, err.length())))))
+                    .bodyToMono(String.class)
+                    .timeout(Duration.ofSeconds(20))
+                    .block();
+                break;
+            } catch (Exception e) {
+                log.debug("Host {} failed: {}", host, e.getMessage());
+                if (firstEx == null) firstEx = e;
+            }
         }
-        cachedCrumb = crumb.trim();
-        log.info("Yahoo crumb obtained successfully (length={})", cachedCrumb.length());
+        if (body == null) throw firstEx != null ? firstEx : new IllegalStateException("No response from Yahoo");
+
+        return parseResponse(body, appSymbol, interval);
     }
 
-    /** A valid crumb is a short non-JSON string — not HTML, not a JSON error body. */
-    private boolean isValidCrumb(String s) {
-        if (s == null || s.isBlank()) return false;
-        String t = s.trim();
-        return !t.startsWith("<") && !t.startsWith("{") && t.length() < 64;
-    }
-
-    private List<Candle> fetchWithCrumb(String yahooSymbol, String appSymbol,
-                                         String interval, String range) throws Exception {
-        String body = webClient.get()
-            .uri(uri -> uri
-                .scheme("https").host("query1.finance.yahoo.com")
-                .path("/v8/finance/chart/{symbol}")
-                .queryParam("interval", interval)
-                .queryParam("range", range)
-                .queryParam("crumb", cachedCrumb)
-                .queryParam("includePrePost", "false")
-                .build(yahooSymbol))
-            .header("Cookie", cachedCookie)
-            .retrieve()
-            .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                res -> res.bodyToMono(String.class).map(err ->
-                    new RuntimeException("Yahoo HTTP " + res.statusCode().value() + ": " + err)))
-            .bodyToMono(String.class)
-            .timeout(Duration.ofSeconds(15))
-            .block();
-
+    private List<Candle> parseResponse(String body, String appSymbol, String interval) throws Exception {
         JsonNode root = objectMapper.readTree(body);
         JsonNode result = root.path("chart").path("result").get(0);
         if (result == null || result.isMissingNode()) {
@@ -228,10 +195,10 @@ public class YahooFinanceService {
 
         JsonNode timestamps = result.path("timestamp");
         JsonNode quote = result.path("indicators").path("quote").get(0);
-        JsonNode opens = quote.path("open");
-        JsonNode highs = quote.path("high");
-        JsonNode lows = quote.path("low");
-        JsonNode closes = quote.path("close");
+        JsonNode opens   = quote.path("open");
+        JsonNode highs   = quote.path("high");
+        JsonNode lows    = quote.path("low");
+        JsonNode closes  = quote.path("close");
         JsonNode volumes = quote.path("volume");
 
         List<Candle> candles = new ArrayList<>();
@@ -252,8 +219,35 @@ public class YahooFinanceService {
             c.setVolume(volumes.get(i).isNull() ? 0L : volumes.get(i).asLong());
             candles.add(c);
         }
-        log.info("Parsed {} candles from Yahoo ({} {})", candles.size(), interval, range);
+        log.info("Parsed {} candles from Yahoo response for {} [{}]", candles.size(), appSymbol, interval);
         return candles;
+    }
+
+    /** Convert a range string like "60d", "1mo", "3mo", "7d" to days, capped by interval limits. */
+    private int rangeToDays(String interval, String range) {
+        int requested;
+        if (range.endsWith("d")) {
+            requested = Integer.parseInt(range.replace("d", ""));
+        } else if (range.endsWith("mo")) {
+            requested = Integer.parseInt(range.replace("mo", "")) * 30;
+        } else if (range.endsWith("y")) {
+            requested = Integer.parseInt(range.replace("y", "")) * 365;
+        } else {
+            requested = 30; // default
+        }
+
+        int maxDays = switch (interval) {
+            case "1m"  -> MAX_DAYS_1M;
+            case "5m"  -> MAX_DAYS_5M;
+            case "15m" -> MAX_DAYS_15M;
+            default    -> 365;
+        };
+
+        int days = Math.min(requested, maxDays);
+        if (days < requested) {
+            log.info("Capping {} range from {}d to {}d (Yahoo {} limit)", interval, requested, days, interval);
+        }
+        return days;
     }
 
     private BigDecimal scaled(double v) {
