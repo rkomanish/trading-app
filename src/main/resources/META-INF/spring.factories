@@ -1,1 +1,2 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
 com.niftyautotrader.config.DatabaseUrlEnvironmentPostProcessor

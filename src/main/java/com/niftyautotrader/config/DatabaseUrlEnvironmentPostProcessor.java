@@ -54,6 +54,8 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
 
             env.getPropertySources().addFirst(
                 new MapPropertySource("databaseUrlDerived", props));
+            // Logging isn't initialised this early — use stdout so it shows in deploy logs.
+            System.out.println("[DatabaseUrlEnvironmentPostProcessor] Using JDBC url " + jdbcUrl);
         } catch (Exception e) {
             // Leave the defaults in place rather than failing startup on a malformed URL.
             System.err.println("Could not parse DATABASE_URL: " + e.getMessage());
