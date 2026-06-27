@@ -477,10 +477,19 @@ async function loadDay(date, tf, keepProgress) {
         idx = 0;
         for (let i=0;i<allBars.length;i++){ if (allBars[i].time <= prevTime) idx = i; else break; }
     } else {
-        idx = 0;
+        // Reveal a small warmup window so the chart has visible context at the
+        // open (a single candle renders as a near-empty/black chart).
+        idx = Math.min(15, Math.max(0, allBars.length - 1));
     }
     renderUpTo(idx);
     chart.timeScale().fitContent();
+    // Re-fit after the layout settles (mobile width/height can be late).
+    requestAnimationFrame(() => {
+        if (!chart) return;
+        const el = document.getElementById('chart');
+        chart.applyOptions({ width: el.clientWidth, height: chartHeight() });
+        chart.timeScale().fitContent();
+    });
 }
 
 // Only snap to the latest candle if the user is already viewing the right edge.
