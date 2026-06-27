@@ -86,9 +86,12 @@
             <span class="sep"></span>
             <button class="ctrl-btn" id="playBtn">&#9658; Play</button>
             <button class="ctrl-btn" id="stepBtn">&#9197; Step</button>
-            <select id="speedSel" title="Replay speed">
-                <option value="2000">0.5x</option>
-                <option value="1000" selected>1x</option>
+            <select id="speedSel" title="Replay speed (lower = slower, more time to analyze)">
+                <option value="10000">0.1x (10s/candle)</option>
+                <option value="5000">0.2x (5s/candle)</option>
+                <option value="3000" selected>0.33x (3s/candle)</option>
+                <option value="2000">0.5x (2s/candle)</option>
+                <option value="1000">1x (1s/candle)</option>
                 <option value="500">2x</option>
                 <option value="200">5x</option>
                 <option value="100">10x</option>
