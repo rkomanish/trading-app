@@ -97,6 +97,19 @@ app:
   anthropic:
     api-key: ${ANTHROPIC_API_KEY:not-set}
 
+  # Daily auto-import of historical candles from Yahoo so 1m history
+  # accumulates over time (Yahoo only serves the last ~7 days of 1m).
+  data-import:
+    enabled: ${DATA_IMPORT_ENABLED:true}
+    yahoo-symbol: "^NSEI"
+    app-symbol: "NIFTY"
+    # cron: every weekday at 16:00 IST (after market close)
+    cron: "0 0 16 * * MON-FRI"
+    intervals:
+      - { interval: "1m",  range: "7d" }
+      - { interval: "5m",  range: "60d" }
+      - { interval: "15m", range: "60d" }
+
   # Dhan free market-data API. Get a token at https://dhanhq.co
   # When enabled + credentials present, the scheduler uses Dhan (real-time);
   # otherwise it falls back to Yahoo Finance (15-min delayed).
