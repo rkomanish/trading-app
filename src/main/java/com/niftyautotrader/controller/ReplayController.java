@@ -62,8 +62,45 @@ public class ReplayController {
         LocalDate date = LocalDate.parse((String) body.get("date"));
         String tf = (String) body.getOrDefault("timeframe", "5m");
         BigDecimal capital = new BigDecimal(String.valueOf(body.getOrDefault("capital", "100000")));
-        ReplaySession s = replayService.startSession(http.getId(), date, tf, capital);
+        double ivPct = Double.parseDouble(String.valueOf(body.getOrDefault("iv", "12")));
+        ReplaySession s = replayService.startSession(http.getId(), date, tf, capital, ivPct / 100.0);
         return state(s, null);
+    }
+
+    /** Synthetic Black-Scholes option chain around the given spot. */
+    @GetMapping("/chain")
+    @ResponseBody
+    public Map<String, Object> chain(@RequestParam double spot,
+                                     @RequestParam(defaultValue = "50") int step,
+                                     @RequestParam(defaultValue = "10") int strikes,
+                                     HttpSession http) {
+        ReplaySession s = replayService.session(http.getId());
+        double iv = s != null ? s.getIv() : 0.12;
+        double tte = s != null ? s.getTteYears() : 7.0 / 365.0;
+        Map<String, Object> m = new HashMap<>();
+        m.put("spot", spot);
+        m.put("ivPct", iv * 100.0);
+        m.put("daysToExpiry", Math.round(tte * 365.0));
+        m.put("rows", replayService.buildChain(spot, iv, tte, step, strikes));
+        return m;
+    }
+
+    /** Buy/sell a CE/PE from the chain — entry premium is priced from spot. */
+    @PostMapping("/option-order")
+    @ResponseBody
+    public Map<String, Object> optionOrder(@RequestBody Map<String, Object> body, HttpSession http) {
+        ReplaySession s = require(http);
+        String optType = String.valueOf(body.get("optType")); // CE or PE
+        String side = String.valueOf(body.getOrDefault("side", "LONG"));
+        double strike = ((Number) body.get("strike")).doubleValue();
+        int lots = ((Number) body.getOrDefault("lots", 1)).intValue();
+        double spot = ((Number) body.get("spot")).doubleValue();
+        String time = String.valueOf(body.getOrDefault("time", ""));
+        if (lots < 1) lots = 1;
+        double premium = com.niftyautotrader.service.replay.BlackScholes
+            .price(spot, strike, s.getTteYears(), s.getIv(), "CE".equals(optType)).price();
+        s.openOption(optType, strike, side, lots, BigDecimal.valueOf(Math.round(premium * 100.0) / 100.0), time);
+        return state(s, BigDecimal.valueOf(spot));
     }
 
     @PostMapping("/order")

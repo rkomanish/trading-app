@@ -43,6 +43,48 @@ public class ReplayService {
     /** A single OHLCV bar for the chart (time = IST wall-clock seconds for display). */
     public record Bar(long time, double open, double high, double low, double close, long volume, String label) {}
 
+    /** One side (CE or PE) of an option chain row. */
+    public record OptionQuote(double ltp, double delta, double theta, double iv) {}
+
+    /** One strike row of the synthetic option chain. */
+    public record ChainRow(double strike, boolean atm, OptionQuote ce, OptionQuote pe) {}
+
+    /** Nearest weekly expiry (Thursday) on/after the session date; time-to-expiry in years. */
+    public double tteYearsFor(LocalDate sessionDate) {
+        LocalDate d = sessionDate;
+        while (d.getDayOfWeek() != java.time.DayOfWeek.THURSDAY) d = d.plusDays(1);
+        long days = java.time.temporal.ChronoUnit.DAYS.between(sessionDate, d);
+        // Same-day (0DTE) keeps a small fraction so premiums aren't pure intrinsic.
+        double effDays = days == 0 ? 0.4 : days;
+        return effDays / 365.0;
+    }
+
+    /**
+     * Build a synthetic Black-Scholes option chain around the spot.
+     * @param spot       current Nifty spot
+     * @param iv         implied volatility (fraction, e.g. 0.12)
+     * @param tteYears   time to expiry in years
+     * @param step       strike interval (e.g. 50)
+     * @param numStrikes strikes on EACH side of ATM
+     */
+    public List<ChainRow> buildChain(double spot, double iv, double tteYears, int step, int numStrikes) {
+        long atm = Math.round(spot / step) * (long) step;
+        List<ChainRow> rows = new ArrayList<>();
+        for (int i = numStrikes; i >= -numStrikes; i--) {
+            double strike = atm + (long) i * step;
+            if (strike <= 0) continue;
+            var ce = BlackScholes.price(spot, strike, tteYears, iv, true);
+            var pe = BlackScholes.price(spot, strike, tteYears, iv, false);
+            rows.add(new ChainRow(strike, Math.round(strike) == atm,
+                new OptionQuote(round2(ce.price()), round3(ce.delta()), round2(ce.theta()), iv),
+                new OptionQuote(round2(pe.price()), round3(pe.delta()), round2(pe.theta()), iv)));
+        }
+        return rows;
+    }
+
+    private static double round2(double v) { return Math.round(v * 100.0) / 100.0; }
+    private static double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
+
     /** Base timeframe used to build everything else. Prefer 1m; fall back to 5m if no 1m data. */
     private String baseTimeframe() {
         if (candleRepo.existsBySymbolAndTimeframe(SYMBOL, "1m")) return "1m";
@@ -103,8 +145,11 @@ public class ReplayService {
 
     // ── Session management ──────────────────────────────────────────────────────
 
-    public ReplaySession startSession(String sessionId, LocalDate date, String timeframe, BigDecimal capital) {
+    public ReplaySession startSession(String sessionId, LocalDate date, String timeframe,
+                                      BigDecimal capital, double iv) {
         ReplaySession s = new ReplaySession(date, timeframe, capital);
+        s.setIv(iv);
+        s.setTteYears(tteYearsFor(date));
         sessions.put(sessionId, s);
         log.info("Replay session started: id={} date={} tf={} capital={}", sessionId, date, timeframe, capital);
         return s;

@@ -81,6 +81,10 @@
                 <label>Demo Capital (₹)</label>
                 <input id="capitalInp" type="number" value="100000" style="width:120px"/>
             </div>
+            <div class="form-group">
+                <label title="Implied volatility for the synthetic option chain">IV %</label>
+                <input id="ivInp" type="number" value="12" step="0.5" style="width:70px"/>
+            </div>
             <button class="btn btn-primary" id="startBtn">Start Replay</button>
             <span id="noData" class="muted" th:if="${#lists.isEmpty(availableDates)}">
                 No candle data found. Import NIFTY data on the Backtest page first.
@@ -163,6 +167,38 @@
                     </p>
                 </div>
             </div>
+        </div>
+
+        <div class="card" style="margin-top:10px;">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div class="card-title" style="margin:0;">Options Chain
+                    <span class="muted" style="text-transform:none; letter-spacing:0;">· synthetic (Black-Scholes)</span>
+                </div>
+                <span class="muted" id="chainMeta" style="font-size:11px;"></span>
+                <span style="margin-left:auto;"></span>
+                <label class="muted" style="font-size:11px;">Order side:</label>
+                <select id="optSideSel" style="padding:4px;">
+                    <option value="LONG" selected>Buy</option>
+                    <option value="SHORT">Sell</option>
+                </select>
+                <label class="muted" style="font-size:11px;">Lots:</label>
+                <input id="optLotsInp" type="number" value="1" min="1" style="width:60px; padding:4px;"/>
+            </div>
+            <div class="scroll" style="max-height:280px; margin-top:8px;">
+                <table id="chainTable">
+                    <thead><tr>
+                        <th style="text-align:right;">CE θ</th><th style="text-align:right;">CE Δ</th>
+                        <th style="text-align:right;">CE LTP</th><th></th>
+                        <th style="text-align:center; color:#ff9944;">STRIKE</th>
+                        <th></th><th>PE LTP</th><th>PE Δ</th><th>PE θ</th>
+                    </tr></thead>
+                    <tbody id="chainBody"><tr><td colspan="9" class="muted">Start replay to load the chain</td></tr></tbody>
+                </table>
+            </div>
+            <p class="muted" style="font-size:11px; margin-top:6px;">
+                Premiums are modelled from spot via Black-Scholes (not real historical prices).
+                Click BUY/SELL on a row to trade that strike at the current candle.
+            </p>
         </div>
 
         <div class="tables-row">
@@ -431,7 +467,7 @@ function autoFollow() {
 }
 
 function stepForward() {
-    if (idx < allBars.length - 1) { idx++; renderUpTo(idx); autoFollow(); refreshState(); }
+    if (idx < allBars.length - 1) { idx++; renderUpTo(idx); autoFollow(); refreshState(); updateChain(); }
     else pause();
 }
 
@@ -462,8 +498,8 @@ function realtimeTick() {
                           color: fc.close >= fc.open ? '#0a3a0a' : '#3a1a1a' });
     showCountdown(formDuration - elapsed);
 
-    // refresh account ~1x/sec so unrealized P&L tracks the live price
-    if (performance.now() - lastStateMs > 1000) { lastStateMs = performance.now(); refreshState(); }
+    // refresh account + option chain ~1x/sec so premiums/P&L track the live price
+    if (performance.now() - lastStateMs > 1000) { lastStateMs = performance.now(); refreshState(); updateChain(); }
 
     if (t >= 1) {
         forming = false;
@@ -471,6 +507,7 @@ function realtimeTick() {
         renderUpTo(idx);
         autoFollow();
         refreshState();
+        updateChain();
         if (idx >= allBars.length - 1) { pause(); }
     }
 }
@@ -519,13 +556,22 @@ function renderAccount(s) {
     } else {
         const price = currentPrice();
         pb.innerHTML = s.positions.map(p => {
-            const diff = p.side === 'LONG' ? (price - p.entryPrice) : (p.entryPrice - price);
-            const pnl = diff * p.units;
-            const cls = pnl >= 0 ? 'green' : 'red';
+            let mark, label;
+            if (p.option) {
+                mark = lastChain[`${p.optType}:${p.strike}`];   // current premium from chain
+                label = `${p.side} ${p.optType} ${p.strike}`;
+            } else {
+                mark = price;                                    // spot
+                label = p.side;
+            }
+            const pnl = mark != null
+                ? (p.side === 'LONG' ? (mark - p.entryPrice) : (p.entryPrice - mark)) * p.units
+                : null;
+            const cls = pnl == null ? 'muted' : (pnl >= 0 ? 'green' : 'red');
             const badge = p.side === 'LONG' ? 'badge-bullish' : 'badge-bearish';
-            return `<tr><td><span class="badge ${badge}">${p.side}</span></td>
+            return `<tr><td><span class="badge ${badge}">${label}</span></td>
                 <td>${p.lots}</td><td>${Number(p.entryPrice).toFixed(2)}</td><td>${p.entryTime}</td>
-                <td class="${cls}">${fmt(pnl)}</td>
+                <td class="${cls}">${pnl == null ? '—' : fmt(pnl)}</td>
                 <td><button class="ctrl-btn btn-sm" onclick="closePos(${p.id})">Close</button></td></tr>`;
         }).join('');
     }
@@ -537,7 +583,8 @@ function renderAccount(s) {
         lb.innerHTML = [...s.trades].reverse().map(t => {
             const badge = t.side === 'LONG' ? 'badge-bullish' : 'badge-bearish';
             const cls = t.pnl >= 0 ? 'green' : 'red';
-            return `<tr><td><span class="badge ${badge}">${t.side}</span></td>
+            const label = t.option ? `${t.side} ${t.optType} ${t.strike}` : t.side;
+            return `<tr><td><span class="badge ${badge}">${label}</span></td>
                 <td>${t.lots}</td><td>${Number(t.entryPrice).toFixed(2)}</td><td>${Number(t.exitPrice).toFixed(2)}</td>
                 <td>${t.entryTime}</td><td>${t.exitTime}</td><td class="${cls}">${fmt(t.pnl)}</td></tr>`;
         }).join('');
@@ -559,6 +606,44 @@ async function squareOff() {
     if (s.active) renderAccount(s);
 }
 
+// ── Options chain ────────────────────────────────────────────────────────────
+let lastChain = {};  // key `${type}:${strike}` -> ltp, for live per-position P&L
+async function updateChain() {
+    const spot = currentPrice();
+    if (spot == null) return;
+    const res = await fetch(`/replay/chain?spot=${spot}&step=50&strikes=10`);
+    const data = await res.json();
+    document.getElementById('chainMeta').textContent =
+        `spot ${Number(spot).toFixed(1)} · IV ${data.ivPct.toFixed(1)}% · ${data.daysToExpiry}DTE`;
+    lastChain = {};
+    const body = document.getElementById('chainBody');
+    body.innerHTML = data.rows.map(r => {
+        lastChain[`CE:${r.strike}`] = r.ce.ltp;
+        lastChain[`PE:${r.strike}`] = r.pe.ltp;
+        const atm = r.atm ? 'style="background:#1a1405;"' : '';
+        return `<tr ${atm}>
+            <td style="text-align:right;" class="muted">${r.ce.theta.toFixed(1)}</td>
+            <td style="text-align:right;" class="muted">${r.ce.delta.toFixed(2)}</td>
+            <td style="text-align:right;" class="green">${r.ce.ltp.toFixed(2)}</td>
+            <td><button class="ctrl-btn btn-sm" onclick="optOrder('CE',${r.strike})">CE</button></td>
+            <td style="text-align:center; font-weight:bold; color:#ff9944;">${r.strike}</td>
+            <td><button class="ctrl-btn btn-sm" onclick="optOrder('PE',${r.strike})">PE</button></td>
+            <td class="red">${r.pe.ltp.toFixed(2)}</td>
+            <td class="muted">${r.pe.delta.toFixed(2)}</td>
+            <td class="muted">${r.pe.theta.toFixed(1)}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function optOrder(optType, strike) {
+    const spot = currentPrice(); if (spot == null) return;
+    const side = document.getElementById('optSideSel').value;
+    const lots = parseInt(document.getElementById('optLotsInp').value, 10) || 1;
+    const s = await postJson('/replay/option-order', {optType, strike, side, lots, spot, time: currentTime()});
+    if (s.active) renderAccount(s);
+}
+window.optOrder = optOrder;
+
 function renderTfButtons() {
     const wrap = document.getElementById('tfButtons');
     wrap.innerHTML = TIMEFRAMES.map(tf =>
@@ -578,12 +663,14 @@ document.getElementById('startBtn').onclick = async () => {
     if (!date) return;
     timeframe = document.getElementById('tfSel').value;
     const capital = document.getElementById('capitalInp').value || '100000';
-    await postJson('/replay/start', {date, timeframe, capital});
+    const iv = document.getElementById('ivInp').value || '12';
+    await postJson('/replay/start', {date, timeframe, capital, iv});
     document.getElementById('sim').style.display = 'block';
     buildChart();
     renderTfButtons();
     setTool('cursor');
     await loadDay(date, timeframe, false);
+    await updateChain();
     await refreshState();
 };
 document.getElementById('playBtn').onclick  = () => playing ? pause() : play();
