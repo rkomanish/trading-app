@@ -1,0 +1,44 @@
+# Run the whole stack (app + Postgres) anywhere Docker is available:
+#   docker compose up -d --build
+#
+# Copy .env.example to .env and fill in the secrets first.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: trading-app
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/trading-app
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      APP_USERNAME: ${APP_USERNAME:-admin}
+      APP_PASSWORD: ${APP_PASSWORD:-changeme}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-not-set}
+      KITE_API_KEY: ${KITE_API_KEY:-not-set}
+      KITE_API_SECRET: ${KITE_API_SECRET:-not-set}
+      DHAN_ENABLED: ${DHAN_ENABLED:-false}
+      DHAN_CLIENT_ID: ${DHAN_CLIENT_ID:-not-set}
+      DHAN_ACCESS_TOKEN: ${DHAN_ACCESS_TOKEN:-not-set}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

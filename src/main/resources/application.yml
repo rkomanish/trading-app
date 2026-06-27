@@ -2,7 +2,9 @@ spring:
   application:
     name: nifty-autotrader
   datasource:
-    url: jdbc:postgresql://localhost:5432/trading-app
+    # On a cloud host set SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME /
+    # SPRING_DATASOURCE_PASSWORD (these env vars override the values below).
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/trading-app}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:password}
     hikari:
@@ -29,7 +31,8 @@ spring:
       password: ${APP_PASSWORD:changeme}
 
 server:
-  port: 8080
+  # Cloud platforms (Railway/Render/Fly) inject the listening port via $PORT.
+  port: ${PORT:8080}
 
 management:
   endpoints:
