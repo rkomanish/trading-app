@@ -9,8 +9,11 @@
         body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0; font-size: 14px; }
         .nav { background: #111; border-bottom: 1px solid #333; padding: 10px 20px; display: flex; align-items: center; gap: 20px; }
         .nav-brand { color: #00ff88; font-weight: bold; font-size: 16px; }
+        .nav-links { display: flex; align-items: center; gap: 20px; flex: 1; }
         .nav a { color: #aaa; text-decoration: none; padding: 5px 10px; border-radius: 3px; }
         .nav a:hover, .nav a.active { color: #fff; background: #222; }
+        .nav-toggle { display: none; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0;
+                      font-size: 20px; line-height: 1; padding: 6px 12px; border-radius: 4px; cursor: pointer; margin-left: auto; }
         .mode-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-left: auto; }
         .mode-paper { background: #1a3a1a; color: #00ff88; border: 1px solid #00ff88; }
         .mode-live  { background: #3a0a0a; color: #ff4444; border: 1px solid #ff4444; animation: pulse 1s infinite; }
@@ -54,37 +57,78 @@
         /* ── Global mobile responsiveness (applies to every page) ─────────── */
         @media (max-width: 760px) {
             .container { padding: 12px; }
-            /* Nav wraps to multiple lines and scrolls horizontally if needed */
-            .nav { flex-wrap: wrap; gap: 6px 10px; padding: 10px 12px; }
-            .nav-brand { font-size: 14px; width: 100%; }
-            .nav a { padding: 4px 8px; font-size: 13px; }
-            .mode-badge { margin-left: 0; }
+            /* Hamburger menu: collapse links behind a toggle */
+            .nav { flex-wrap: wrap; gap: 8px 10px; padding: 10px 12px; }
+            .nav-toggle { display: block; }
+            .nav-links { display: none; flex-direction: column; align-items: stretch;
+                         width: 100%; gap: 2px; margin-top: 6px; }
+            .nav-links.open { display: flex; }
+            .nav-links a { padding: 10px 8px; border-bottom: 1px solid #1a1a1a; }
+            .mode-badge { margin: 6px 0 0; align-self: flex-start; }
             /* Collapse all fixed multi-column grids to a single column */
             .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-            /* Let wide tables scroll inside their card instead of widening the page */
-            .card { overflow-x: auto; }
-            table { font-size: 12px; }
-            th, td { padding: 6px; }
             .stat-value { font-size: 20px; }
+
+            /* Card-style rows: turn data tables into stacked cards (labels added by JS) */
+            table.cards thead { display: none; }
+            table.cards, table.cards tbody { display: block; width: 100%; }
+            table.cards tr { display: block; background: #141414; border: 1px solid #222;
+                             border-radius: 6px; margin-bottom: 8px; padding: 4px 8px; }
+            table.cards td { display: flex; justify-content: space-between; align-items: baseline;
+                             gap: 12px; border: none; padding: 5px 0; text-align: right; }
+            table.cards td::before { content: attr(data-label); color: #777; font-size: 11px;
+                             text-transform: uppercase; letter-spacing: 0.5px; text-align: left; flex: 0 0 auto; }
+            table.cards td:empty { display: none; }
+            /* Tables opting out of cards just scroll horizontally inside their card */
+            .card { overflow-x: auto; }
+            table.nocards { font-size: 12px; }
+            table.nocards th, table.nocards td { padding: 6px; }
         }
         @media (max-width: 480px) {
-            .nav a { padding: 4px 6px; font-size: 12px; }
             .btn { padding: 7px 12px; font-size: 12px; }
             .stat-value { font-size: 18px; }
         }
     </style>
+    <script>
+        // Shared mobile behaviour for every page (hamburger menu + card tables).
+        document.addEventListener('DOMContentLoaded', function () {
+            // Hamburger toggle
+            var toggle = document.getElementById('navToggle');
+            var links = document.getElementById('navLinks');
+            if (toggle && links) {
+                toggle.addEventListener('click', function () { links.classList.toggle('open'); });
+            }
+            // Turn data tables into stacked cards on mobile: label each cell from its header.
+            // Skip tables marked .nocards (dense/live tables keep horizontal scroll instead).
+            document.querySelectorAll('table').forEach(function (tbl) {
+                if (tbl.classList.contains('nocards')) return;
+                var heads = tbl.querySelectorAll('thead th');
+                if (!heads.length) return;
+                var labels = Array.prototype.map.call(heads, function (th) { return th.textContent.trim(); });
+                tbl.querySelectorAll('tbody tr').forEach(function (tr) {
+                    Array.prototype.forEach.call(tr.children, function (td, i) {
+                        if (labels[i]) td.setAttribute('data-label', labels[i]);
+                    });
+                });
+                tbl.classList.add('cards');
+            });
+        });
+    </script>
 </head>
 <nav th:fragment="nav(current)" class="nav">
     <span class="nav-brand">&#9651; NIFTY AUTOTRADER</span>
-    <a th:href="@{/dashboard}" th:classappend="${current == 'dashboard'} ? 'active'">Dashboard</a>
-    <a th:href="@{/trades}" th:classappend="${current == 'trades'} ? 'active'">Trades</a>
-    <a th:href="@{/backtest}" th:classappend="${current == 'backtest'} ? 'active'">Backtest</a>
-    <a th:href="@{/replay}" th:classappend="${current == 'replay'} ? 'active'" style="color:#ff9944">Replay</a>
-    <a th:href="@{/paper}" th:classappend="${current == 'paper'} ? 'active'" style="color:#ffcc00">Paper Trading</a>
-    <a th:href="@{/strategies}" th:classappend="${current == 'strategies'} ? 'active'" style="color:#88aaff">Strategies</a>
-    <a th:href="@{/sentiment}" th:classappend="${current == 'sentiment'} ? 'active'">Sentiment</a>
-    <a th:href="@{/config}" th:classappend="${current == 'config'} ? 'active'">Config</a>
-    <span th:fragment="mode-badge" th:classappend="${liveMode} ? 'mode-live' : 'mode-paper'" class="mode-badge"
-          th:text="${liveMode} ? '&#9888; LIVE TRADING' : '&#128196; PAPER MODE'">PAPER MODE</span>
+    <button type="button" class="nav-toggle" id="navToggle" aria-label="Toggle menu">&#9776;</button>
+    <div class="nav-links" id="navLinks">
+        <a th:href="@{/dashboard}" th:classappend="${current == 'dashboard'} ? 'active'">Dashboard</a>
+        <a th:href="@{/trades}" th:classappend="${current == 'trades'} ? 'active'">Trades</a>
+        <a th:href="@{/backtest}" th:classappend="${current == 'backtest'} ? 'active'">Backtest</a>
+        <a th:href="@{/replay}" th:classappend="${current == 'replay'} ? 'active'" style="color:#ff9944">Replay</a>
+        <a th:href="@{/paper}" th:classappend="${current == 'paper'} ? 'active'" style="color:#ffcc00">Paper Trading</a>
+        <a th:href="@{/strategies}" th:classappend="${current == 'strategies'} ? 'active'" style="color:#88aaff">Strategies</a>
+        <a th:href="@{/sentiment}" th:classappend="${current == 'sentiment'} ? 'active'">Sentiment</a>
+        <a th:href="@{/config}" th:classappend="${current == 'config'} ? 'active'">Config</a>
+        <span th:fragment="mode-badge" th:classappend="${liveMode} ? 'mode-live' : 'mode-paper'" class="mode-badge"
+              th:text="${liveMode} ? '&#9888; LIVE TRADING' : '&#128196; PAPER MODE'">PAPER MODE</span>
+    </div>
 </nav>
 </html>
