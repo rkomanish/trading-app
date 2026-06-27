@@ -52,24 +52,26 @@
                     line-height:20px; text-align:center; font-size:14px; color:#fff; background:rgba(0,0,0,0.5);
                     border:1px solid rgba(255,255,255,0.3); border-radius:4px; cursor:pointer; pointer-events:auto; }
         .zone-del:hover { background:#cc2222; }
+        .zone-swatch { position:absolute; left:30px; top:50%; transform:translateY(-50%); width:22px; height:22px;
+                       border-radius:4px; cursor:pointer; pointer-events:auto; border:1px solid rgba(255,255,255,0.5); }
 
         /* ── Light theme (replay page) ─────────────────────────────────────── */
-        body.light-replay { background:#f4f5f7; color:#222; }
-        body.light-replay .card,
-        body.light-replay .ctrlbar,
-        body.light-replay .chart-card,
-        body.light-replay .rail { background:#ffffff; border-color:#dcdfe4; }
-        body.light-replay .card-title,
-        body.light-replay .muted { color:#777; }
-        body.light-replay .ctrl-btn,
-        body.light-replay .tf-btn { background:#f0f1f3; border-color:#ccc; color:#333; }
-        body.light-replay .tf-btn.active { background:#fff3e6; color:#d2691e; border-color:#d2691e; }
-        body.light-replay .rail button { background:#f0f1f3; border-color:#ccc; color:#444; }
-        body.light-replay .rail button.active { background:#fff3e6; border-color:#d2691e; color:#d2691e; }
-        body.light-replay input, body.light-replay select, body.light-replay textarea { background:#fff; border-color:#ccc; color:#222; }
-        body.light-replay th { color:#888; border-color:#e3e5e9; }
-        body.light-replay td { border-color:#eceef1; }
-        body.light-replay .pill { background:#f0f1f3; border-color:#ccc; }
+        body.light { background:#f4f5f7; color:#222; }
+        body.light .card,
+        body.light .ctrlbar,
+        body.light .chart-card,
+        body.light .rail { background:#ffffff; border-color:#dcdfe4; }
+        body.light .card-title,
+        body.light .muted { color:#777; }
+        body.light .ctrl-btn,
+        body.light .tf-btn { background:#f0f1f3; border-color:#ccc; color:#333; }
+        body.light .tf-btn.active { background:#fff3e6; color:#d2691e; border-color:#d2691e; }
+        body.light .rail button { background:#f0f1f3; border-color:#ccc; color:#444; }
+        body.light .rail button.active { background:#fff3e6; border-color:#d2691e; color:#d2691e; }
+        body.light input, body.light select, body.light textarea { background:#fff; border-color:#ccc; color:#222; }
+        body.light th { color:#888; border-color:#e3e5e9; }
+        body.light td { border-color:#eceef1; }
+        body.light .pill { background:#f0f1f3; border-color:#ccc; }
         .rt-toggle { display:flex; align-items:center; gap:5px; color:#ff9944; cursor:pointer; user-select:none; }
         .rt-toggle input { transform:scale(1.1); }
         .ohlc span { margin-right: 14px; }
@@ -351,7 +353,7 @@ function buildChart() {
     volumeSeries.priceScale().applyOptions({ scaleMargins:{top:0.85, bottom:0} });
 
     chart.subscribeClick(onChartClick);
-    applyTheme(chartTheme); // honour saved light/dark preference
+    recolorChart(); // match the current global theme
 
     // keep S/R zone overlays glued to their price levels during pan/zoom/scroll
     (function zoneLoop() { positionZones(); requestAnimationFrame(zoneLoop); })();
@@ -411,6 +413,21 @@ function onChartClick(param) {
     }
 }
 
+// Zone colour palette — cycled via the swatch (neutral / support / resistance).
+const ZONE_COLORS = [
+    { name: 'neutral',    border: 'rgba(255,153,68,0.85)',  fill: 'rgba(255,153,68,0.14)',  tag: '#ff9944' },
+    { name: 'support',    border: 'rgba(38,166,154,0.85)',  fill: 'rgba(38,166,154,0.16)',  tag: '#26a69a' },
+    { name: 'resistance', border: 'rgba(239,83,80,0.85)',   fill: 'rgba(239,83,80,0.16)',   tag: '#ef5350' },
+];
+function applyZoneColor(z) {
+    const c = ZONE_COLORS[z.colorIdx];
+    z.el.style.background = c.fill;
+    z.el.style.borderTopColor = c.border;
+    z.el.style.borderBottomColor = c.border;
+    z.tag.style.color = c.tag;
+    z.swatch.style.background = c.border;
+}
+
 function createZone(p1, p2) {
     const top = Math.max(p1, p2), bottom = Math.min(p1, p2);
     const el = document.createElement('div');
@@ -420,12 +437,21 @@ function createZone(p1, p2) {
     const hTop = document.createElement('div'); hTop.className = 'zone-handle top';
     const hBot = document.createElement('div'); hBot.className = 'zone-handle bot';
     const grip = document.createElement('div'); grip.className = 'zone-grip'; grip.innerHTML = '&#10021;';
+    const swatch = document.createElement('div'); swatch.className = 'zone-swatch';
     const del  = document.createElement('div'); del.className = 'zone-del'; del.innerHTML = '&times;';
-    el.append(tag, hTop, hBot, grip, del);
+    el.append(tag, hTop, hBot, grip, swatch, del);
     document.querySelector('.chart-card').appendChild(el);
 
-    const z = { top, bottom, el, tag };
+    const z = { top, bottom, el, tag, swatch, colorIdx: 0 };
     zones.push(z);
+    applyZoneColor(z);
+
+    // cycle colour: neutral (orange) → support (green) → resistance (red)
+    swatch.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        z.colorIdx = (z.colorIdx + 1) % ZONE_COLORS.length;
+        applyZoneColor(z);
+    });
 
     // price at a given clientY, in chart coordinates
     const yToPrice = (clientY) => {
@@ -505,15 +531,10 @@ function zoom(factor) {
 }
 
 // ── Theme ────────────────────────────────────────────────────────────────────
-let chartTheme = localStorage.getItem('replayTheme') || 'dark';
-function applyTheme(t) {
-    chartTheme = t;
-    localStorage.setItem('replayTheme', t);
-    const light = t === 'light';
-    document.body.classList.toggle('light-replay', light);
-    const btn = document.getElementById('themeBtn');
-    if (btn) btn.innerHTML = light ? '&#9789; Dark' : '&#9728; Light';
+// Follows the global app theme (body.light). Recolours the chart to match.
+function recolorChart() {
     if (!chart) return;
+    const light = document.body.classList.contains('light');
     chart.applyOptions({
         layout: { background: { color: light ? '#ffffff' : '#0a0a0a' }, textColor: light ? '#333' : '#aaa' },
         grid: { vertLines: { color: light ? '#eef0f2' : '#161616' }, horzLines: { color: light ? '#eef0f2' : '#161616' } },
@@ -524,7 +545,11 @@ function applyTheme(t) {
         upColor:   light ? '#26a69a' : '#00ff88', downColor:   light ? '#ef5350' : '#ff4444',
         wickUpColor: light ? '#26a69a' : '#00ff88', wickDownColor: light ? '#ef5350' : '#ff4444',
     });
+    const btn = document.getElementById('themeBtn');
+    if (btn) btn.innerHTML = light ? '&#9789; Dark' : '&#9728; Light';
 }
+// Re-colour the chart whenever the global theme toggles.
+window.onThemeChange = function () { recolorChart(); };
 
 // ── Candle reveal ───────────────────────────────────────────────────────────────
 function toCandle(b) { return {time:b.time, open:b.open, high:b.high, low:b.low, close:b.close}; }
@@ -827,8 +852,8 @@ document.getElementById('resetBtn').onclick = async () => {
 document.getElementById('zoomInBtn').onclick  = () => zoom(0.7);
 document.getElementById('zoomOutBtn').onclick = () => zoom(1.4);
 document.getElementById('fitBtn').onclick     = () => chart.timeScale().fitContent();
-document.getElementById('themeBtn').onclick   = () => applyTheme(chartTheme === 'light' ? 'dark' : 'light');
-applyTheme(chartTheme); // reflect saved preference on load (before chart is built)
+document.getElementById('themeBtn').onclick   = () =>
+    window.applyAppTheme(document.body.classList.contains('light') ? 'dark' : 'light');
 
 document.getElementById('toolCursor').onclick = () => setTool('cursor');
 document.getElementById('toolTrend').onclick  = () => setTool('trend');

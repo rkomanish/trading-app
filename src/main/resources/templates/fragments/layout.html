@@ -53,6 +53,34 @@
         label { color: #888; font-size: 12px; display: block; margin-bottom: 4px; }
         .form-group { margin-bottom: 12px; }
         input, select, textarea { max-width: 100%; }
+        .theme-toggle { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; font-size: 14px;
+                        padding: 4px 10px; border-radius: 4px; cursor: pointer; margin-left: 10px; }
+        .theme-toggle:hover { background: #222; }
+
+        /* ── Global LIGHT THEME (applies to every page) ───────────────────── */
+        body.light { background: #f4f5f7; color: #1f2328; }
+        body.light .nav { background: #ffffff; border-bottom-color: #dcdfe4; }
+        body.light .nav-brand { color: #0a8f5b; }
+        body.light .nav a { color: #555; }
+        body.light .nav a:hover, body.light .nav a.active { color: #111; background: #eceef1; }
+        body.light .nav-toggle, body.light .theme-toggle { background: #f0f1f3; border-color: #ccc; color: #333; }
+        body.light .card { background: #ffffff; border-color: #dcdfe4; }
+        body.light .card-title { color: #888; }
+        body.light .stat-value { color: #111; }
+        body.light .stat-label, body.light .muted { color: #888; }
+        body.light th { color: #888; border-bottom-color: #e3e5e9; }
+        body.light td { border-bottom-color: #eceef1; }
+        body.light tr:hover td { background: #f6f7f9; }
+        body.light table.cards tr { background: #fafbfc; border-color: #e3e5e9; }
+        body.light input, body.light select, body.light textarea { background: #fff; border-color: #ccc; color: #1f2328; }
+        body.light label { color: #777; }
+        body.light .btn-primary { background: #e3f5ea; color: #0a8f5b; border-color: #0a8f5b; }
+        body.light .btn-primary:hover { background: #d2efdd; }
+        body.light .btn-sm, body.light .btn { color: inherit; }
+        body.light .mode-paper { background: #e3f5ea; color: #0a8f5b; }
+        body.light .alert-warning { background: #fff8e1; border-color: #e0c200; color: #7a6500; }
+        body.light .alert-success { background: #e6f7ec; border-color: #34a853; color: #1d6b35; }
+        body.light .alert-danger  { background: #fdecec; border-color: #d33; color: #a11; }
 
         /* ── Global mobile responsiveness (applies to every page) ─────────── */
         @media (max-width: 760px) {
@@ -112,6 +140,21 @@
                 });
                 tbl.classList.add('cards');
             });
+
+            // Global light/dark theme
+            var saved = localStorage.getItem('appTheme') || 'dark';
+            window.applyAppTheme = function (t) {
+                document.body.classList.toggle('light', t === 'light');
+                localStorage.setItem('appTheme', t);
+                var b = document.getElementById('themeToggle');
+                if (b) b.innerHTML = (t === 'light' ? '&#9789;' : '&#9728;');
+                if (window.onThemeChange) window.onThemeChange(t);
+            };
+            window.applyAppTheme(saved);
+            var tg = document.getElementById('themeToggle');
+            if (tg) tg.addEventListener('click', function () {
+                window.applyAppTheme(document.body.classList.contains('light') ? 'dark' : 'light');
+            });
         });
     </script>
 </head>
@@ -129,6 +172,7 @@
         <a th:href="@{/config}" th:classappend="${current == 'config'} ? 'active'">Config</a>
         <span th:fragment="mode-badge" th:classappend="${liveMode} ? 'mode-live' : 'mode-paper'" class="mode-badge"
               th:text="${liveMode} ? '&#9888; LIVE TRADING' : '&#128196; PAPER MODE'">PAPER MODE</span>
+        <button type="button" id="themeToggle" class="theme-toggle" title="Toggle light/dark theme">&#9728;</button>
     </div>
 </nav>
 </html>
