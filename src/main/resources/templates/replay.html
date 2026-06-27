@@ -373,8 +373,16 @@ async function loadDay(date, tf, keepProgress) {
     chart.timeScale().fitContent();
 }
 
+// Only snap to the latest candle if the user is already viewing the right edge.
+// If they've panned left to analyse older candles, leave their view untouched.
+function autoFollow() {
+    const ts = chart.timeScale();
+    const pos = ts.scrollPosition();
+    if (pos != null && pos >= -3) ts.scrollToRealTime();
+}
+
 function stepForward() {
-    if (idx < allBars.length - 1) { idx++; renderUpTo(idx); chart.timeScale().scrollToRealTime(); refreshState(); }
+    if (idx < allBars.length - 1) { idx++; renderUpTo(idx); autoFollow(); refreshState(); }
     else pause();
 }
 
@@ -412,7 +420,7 @@ function realtimeTick() {
         forming = false;
         idx++;
         renderUpTo(idx);
-        chart.timeScale().scrollToRealTime();
+        autoFollow();
         refreshState();
         if (idx >= allBars.length - 1) { pause(); }
     }
