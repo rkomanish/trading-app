@@ -30,8 +30,14 @@
         .rail button.active { background:#2a1a05; border-color:#ff9944; color:#ff9944; }
         .rail .rail-label { font-size:9px; color:#555; text-align:center; margin-top:2px; }
 
-        .chart-card { background:#0a0a0a; border:1px solid #222; border-radius:6px; padding:8px; display:flex; flex-direction:column; }
+        .chart-card { position:relative; background:#0a0a0a; border:1px solid #222; border-radius:6px; padding:8px; display:flex; flex-direction:column; }
         #chart { width: 100%; flex: 1; }
+        .countdown { position:absolute; top:14px; right:80px; z-index:5; display:none;
+                     background:#161616; border:1px solid #ff9944; color:#ff9944;
+                     padding:5px 12px; border-radius:5px; font-size:14px; font-weight:bold; letter-spacing:1px; }
+        .countdown small { color:#777; font-weight:normal; letter-spacing:0; }
+        .rt-toggle { display:flex; align-items:center; gap:5px; color:#ff9944; cursor:pointer; user-select:none; }
+        .rt-toggle input { transform:scale(1.1); }
         .ohlc span { margin-right: 14px; }
         .pill { padding: 4px 10px; border-radius: 12px; font-size: 12px; background:#1a1a1a; border:1px solid #333; }
 
@@ -97,6 +103,9 @@
                 <option value="100">10x</option>
             </select>
             <button class="ctrl-btn" id="resetBtn">&#8635; Reset</button>
+            <label class="rt-toggle" title="Each candle forms over its real duration (1m = 60s at 1x)">
+                <input type="checkbox" id="rtToggle"/> &#128338; Realtime
+            </label>
             <span class="sep"></span>
             <button class="ctrl-btn" id="zoomInBtn" title="Zoom in">&#128269;+</button>
             <button class="ctrl-btn" id="zoomOutBtn" title="Zoom out">&#128270;&#8722;</button>
@@ -121,6 +130,7 @@
             </div>
 
             <div class="chart-card">
+                <div class="countdown" id="countdown">00:00 <small>to close</small></div>
                 <div id="chart"></div>
             </div>
 
@@ -184,6 +194,18 @@ let allBars = [];
 let idx = 0;
 let playing = false, timer = null;
 let timeframe = document.getElementById('tfSel').value;
+
+// realtime (live-forming-candle) mode
+let realtime = false;
+let forming = false;
+let formStart = 0, formDuration = 0;
+let livePrice = null;        // current price of the forming candle
+let lastStateMs = 0;
+
+function tfMinutes(tf) {
+    return {'1m':1,'3m':3,'5m':5,'15m':15,'30m':30,'60m':60}[tf] || 5;
+}
+function pad2(n) { return String(n).padStart(2,'0'); }
 
 // drawing state
 let tool = 'cursor';
@@ -311,10 +333,33 @@ function renderUpTo(n) {
     document.getElementById('progress').textContent = `· bar ${n+1}/${allBars.length}`;
 }
 
-function currentPrice() { return allBars[idx] ? allBars[idx].close : null; }
-function currentTime()  { return allBars[idx] ? allBars[idx].label : ''; }
+function currentPrice() {
+    if (forming && livePrice != null) return livePrice;
+    return allBars[idx] ? allBars[idx].close : null;
+}
+function currentTime()  {
+    if (forming && allBars[idx+1]) return allBars[idx+1].label;
+    return allBars[idx] ? allBars[idx].label : '';
+}
+
+// Build a plausible intra-candle path so the forming candle grows tick-by-tick.
+// Bullish candle dips to low first then rallies to close; bearish does the opposite.
+function formingCandle(bar, t) {
+    const {open:O, high:H, low:L, close:C} = bar;
+    const bullish = C >= O;
+    const wp = bullish ? [O, L, H, C] : [O, H, L, C]; // 4 waypoints over t=0..1
+    const seg = Math.min(2, Math.floor(t * 3));       // which third we're in (0,1,2)
+    const localT = (t * 3) - seg;
+    const price = wp[seg] + (wp[seg+1] - wp[seg]) * localT;
+    // running high/low across the path travelled so far
+    let hi = O, lo = O;
+    for (let i = 0; i <= seg; i++) { hi = Math.max(hi, wp[i]); lo = Math.min(lo, wp[i]); }
+    hi = Math.max(hi, price); lo = Math.min(lo, price);
+    return { time: bar.time, open: O, high: hi, low: lo, close: price };
+}
 
 async function loadDay(date, tf, keepProgress) {
+    forming = false; livePrice = null; hideCountdown();
     const prevTime = keepProgress && allBars[idx] ? allBars[idx].time : null;
     const res = await fetch(`/replay/candles?date=${date}&timeframe=${tf}`);
     allBars = await res.json();
@@ -332,16 +377,70 @@ function stepForward() {
     if (idx < allBars.length - 1) { idx++; renderUpTo(idx); chart.timeScale().scrollToRealTime(); refreshState(); }
     else pause();
 }
+
+function showCountdown(msLeft) {
+    const cd = document.getElementById('countdown');
+    cd.style.display = 'block';
+    const s = Math.max(0, Math.ceil(msLeft / 1000));
+    cd.innerHTML = `${pad2(Math.floor(s/60))}:${pad2(s%60)} <small>to close</small>`;
+}
+function hideCountdown() { document.getElementById('countdown').style.display = 'none'; }
+
+// Realtime tick: animate the currently-forming candle, finalize when its time is up.
+function realtimeTick() {
+    const next = allBars[idx + 1];
+    if (!next) { pause(); return; }
+    if (!forming) {
+        forming = true;
+        formStart = performance.now();
+        const mult = parseInt(document.getElementById('speedSel').value, 10); // ms; 1000 = 1x
+        formDuration = tfMinutes(timeframe) * 60 * mult; // 1m @1x => 60000ms
+    }
+    const elapsed = performance.now() - formStart;
+    const t = Math.min(1, elapsed / formDuration);
+    const fc = formingCandle(next, t);
+    livePrice = fc.close;
+    candleSeries.update(fc);
+    volumeSeries.update({ time: next.time, value: Math.round(next.volume * t),
+                          color: fc.close >= fc.open ? '#0a3a0a' : '#3a1a1a' });
+    showCountdown(formDuration - elapsed);
+
+    // refresh account ~1x/sec so unrealized P&L tracks the live price
+    if (performance.now() - lastStateMs > 1000) { lastStateMs = performance.now(); refreshState(); }
+
+    if (t >= 1) {
+        forming = false;
+        idx++;
+        renderUpTo(idx);
+        chart.timeScale().scrollToRealTime();
+        refreshState();
+        if (idx >= allBars.length - 1) { pause(); }
+    }
+}
+
 function play() {
     if (allBars.length === 0) return;
     playing = true;
     document.getElementById('playBtn').innerHTML = '&#10073;&#10073; Pause';
-    timer = setInterval(stepForward, parseInt(document.getElementById('speedSel').value, 10));
+    if (realtime) {
+        timer = setInterval(realtimeTick, 100); // smooth animation
+    } else {
+        timer = setInterval(stepForward, parseInt(document.getElementById('speedSel').value, 10));
+    }
 }
 function pause() {
     playing = false;
     document.getElementById('playBtn').innerHTML = '&#9658; Play';
     if (timer) { clearInterval(timer); timer = null; }
+    // if we paused mid-candle, snap the forming candle to its final values
+    if (forming && allBars[idx+1]) {
+        forming = false;
+        idx++;
+        livePrice = null;
+        renderUpTo(idx);
+        refreshState();
+    }
+    hideCountdown();
 }
 
 // ── Account / trading ───────────────────────────────────────────────────────────
@@ -432,7 +531,13 @@ document.getElementById('startBtn').onclick = async () => {
 };
 document.getElementById('playBtn').onclick  = () => playing ? pause() : play();
 document.getElementById('stepBtn').onclick  = () => { pause(); stepForward(); };
-document.getElementById('speedSel').onchange = () => { if (playing) { pause(); play(); } };
+document.getElementById('speedSel').onchange = () => { if (playing) { const r=realtime; pause(); realtime=r; play(); } };
+document.getElementById('rtToggle').onchange = (e) => {
+    const wasPlaying = playing; pause();
+    realtime = e.target.checked;
+    if (!realtime) hideCountdown();
+    if (wasPlaying) play();
+};
 document.getElementById('resetBtn').onclick = async () => {
     pause(); clearDrawings(); await postJson('/replay/reset', {});
     await postJson('/replay/start', {date: document.getElementById('dateSel').value, timeframe,
