@@ -56,6 +56,29 @@
         .muted { color:#666; }
 
         .tables-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+
+        /* ── Responsive: stack everything on tablets/phones ───────────────── */
+        @media (max-width: 900px) {
+            .replay-full { padding: 8px; }
+            /* rail | chart | side  →  chart on top, side below; rail becomes a horizontal toolbar */
+            .chart-area { grid-template-columns: 1fr; }
+            .rail { flex-direction: row; flex-wrap: wrap; justify-content: center; order: 2; }
+            .chart-card { order: 1; }
+            .side { order: 3; }
+            .tables-row { grid-template-columns: 1fr; }
+            .countdown { right: 60px; top: 10px; padding: 3px 8px; font-size: 12px; }
+        }
+        @media (max-width: 560px) {
+            .ctrlbar { gap: 6px; padding: 6px 8px; }
+            .ctrl-btn { padding: 6px 8px; font-size: 12px; }
+            .tf-btn { padding: 5px 9px; }
+            .ohlc { width: 100%; }
+            /* let horizontal control rows scroll instead of squashing */
+            .setup-card .toolbar { overflow-x: auto; }
+        }
+        /* tables never force the page wider than the screen */
+        .scroll { overflow-x: auto; }
+        table { min-width: 0; }
     </style>
 </head>
 <body>
@@ -267,7 +290,9 @@ async function postJson(url, body) {
 }
 
 function chartHeight() {
-    // fill the viewport below the control bar
+    // On phones use ~55% of the viewport so the trade panel is reachable;
+    // on desktop fill the space below the control bar.
+    if (window.innerWidth <= 900) return Math.max(300, Math.round(window.innerHeight * 0.55));
     return Math.max(420, window.innerHeight - 320);
 }
 
