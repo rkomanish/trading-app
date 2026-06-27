@@ -36,6 +36,10 @@
                      background:#161616; border:1px solid #ff9944; color:#ff9944;
                      padding:5px 12px; border-radius:5px; font-size:14px; font-weight:bold; letter-spacing:1px; }
         .countdown small { color:#777; font-weight:normal; letter-spacing:0; }
+        .zone-band { position:absolute; pointer-events:none; z-index:3;
+                     background:rgba(255,153,68,0.12); border-top:1px dashed rgba(255,153,68,0.6);
+                     border-bottom:1px dashed rgba(255,153,68,0.6); }
+        .zone-band .zone-tag { position:absolute; left:4px; top:1px; font-size:10px; color:#ff9944; background:rgba(0,0,0,0.4); padding:0 4px; border-radius:3px; }
         .rt-toggle { display:flex; align-items:center; gap:5px; color:#ff9944; cursor:pointer; user-select:none; }
         .rt-toggle input { transform:scale(1.1); }
         .ohlc span { margin-right: 14px; }
@@ -126,6 +130,7 @@
                 <button id="toolTrend"  title="Trend line — click two points">&#8599;</button>
                 <button id="toolHLine"  title="Horizontal line — click a level">&#8213;</button>
                 <button id="toolRay"    title="Horizontal ray at price">&#8594;</button>
+                <button id="toolZone"   title="Support/Resistance zone — click two price levels">&#9646;</button>
                 <button id="toolClear"  title="Clear all drawings">&#128465;</button>
             </div>
 
@@ -212,6 +217,8 @@ let tool = 'cursor';
 let drawnSeries = [];      // LineSeries used for trendlines
 let priceLines = [];       // horizontal price lines
 let pendingPoint = null;   // first click of a trendline
+let zones = [];            // S/R zones: {top, bottom, el}
+let pendingZone = null;    // first price click of a zone
 
 function fmt(n) { return n == null ? '-' : '₹' + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2}); }
 function colorPnl(el, v) { el.classList.remove('green','red'); el.classList.add(v >= 0 ? 'green' : 'red'); }
@@ -253,6 +260,9 @@ function buildChart() {
 
     chart.subscribeClick(onChartClick);
 
+    // keep S/R zone overlays glued to their price levels during pan/zoom/scroll
+    (function zoneLoop() { positionZones(); requestAnimationFrame(zoneLoop); })();
+
     window.addEventListener('resize', () => {
         if (!chart) return;
         const h = chartHeight();
@@ -263,9 +273,9 @@ function buildChart() {
 
 // ── Drawing tools ─────────────────────────────────────────────────────────────
 function setTool(t) {
-    tool = t; pendingPoint = null;
+    tool = t; pendingPoint = null; pendingZone = null;
     document.querySelectorAll('.rail button').forEach(b => b.classList.remove('active'));
-    const map = {cursor:'toolCursor', trend:'toolTrend', hline:'toolHLine', ray:'toolRay'};
+    const map = {cursor:'toolCursor', trend:'toolTrend', hline:'toolHLine', ray:'toolRay', zone:'toolZone'};
     if (map[t]) document.getElementById(map[t]).classList.add('active');
     // disable chart panning while drawing trendlines so clicks register cleanly
     if (chart) chart.applyOptions({ handleScroll: t === 'cursor', handleScale: t === 'cursor' });
@@ -286,6 +296,13 @@ function onChartClick(param) {
         return;
     }
 
+    if (tool === 'zone') {
+        if (pendingZone == null) { pendingZone = price; return; }
+        createZone(pendingZone, price);
+        pendingZone = null;
+        return;
+    }
+
     if (tool === 'trend') {
         const pt = { time: param.time, value: price };
         if (!pendingPoint) { pendingPoint = pt; return; }
@@ -297,12 +314,44 @@ function onChartClick(param) {
     }
 }
 
+function createZone(p1, p2) {
+    const top = Math.max(p1, p2), bottom = Math.min(p1, p2);
+    const el = document.createElement('div');
+    el.className = 'zone-band';
+    const tag = document.createElement('span');
+    tag.className = 'zone-tag';
+    tag.textContent = `${bottom.toFixed(0)} – ${top.toFixed(0)}`;
+    el.appendChild(tag);
+    document.querySelector('.chart-card').appendChild(el);
+    zones.push({ top, bottom, el });
+    positionZones();
+}
+
+function positionZones() {
+    if (!chart || zones.length === 0) return;
+    const chartEl = document.getElementById('chart');
+    const axisW = (chart.priceScale('right').width && chart.priceScale('right').width()) || 60;
+    const plotW = chartEl.clientWidth - axisW;
+    zones.forEach(z => {
+        const yTop = candleSeries.priceToCoordinate(z.top);
+        const yBot = candleSeries.priceToCoordinate(z.bottom);
+        if (yTop == null || yBot == null) { z.el.style.display = 'none'; return; }
+        z.el.style.display = 'block';
+        z.el.style.left  = chartEl.offsetLeft + 'px';
+        z.el.style.width = plotW + 'px';
+        z.el.style.top    = (chartEl.offsetTop + yTop) + 'px';
+        z.el.style.height = Math.max(2, yBot - yTop) + 'px';
+    });
+}
+
 function clearDrawings() {
     drawnSeries.forEach(s => chart.removeSeries(s));
     drawnSeries = [];
     priceLines.forEach(pl => candleSeries.removePriceLine(pl));
     priceLines = [];
-    pendingPoint = null;
+    zones.forEach(z => z.el.remove());
+    zones = [];
+    pendingPoint = null; pendingZone = null;
 }
 
 // ── Zoom ───────────────────────────────────────────────────────────────────────
@@ -561,6 +610,7 @@ document.getElementById('toolCursor').onclick = () => setTool('cursor');
 document.getElementById('toolTrend').onclick  = () => setTool('trend');
 document.getElementById('toolHLine').onclick  = () => setTool('hline');
 document.getElementById('toolRay').onclick    = () => setTool('ray');
+document.getElementById('toolZone').onclick   = () => setTool('zone');
 document.getElementById('toolClear').onclick  = () => clearDrawings();
 
 document.getElementById('buyBtn').onclick  = () => placeOrder('LONG');
