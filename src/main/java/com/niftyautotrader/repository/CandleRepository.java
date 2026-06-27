@@ -16,4 +16,8 @@ public interface CandleRepository extends JpaRepository<Candle, Long> {
     List<Candle> findTop100BySymbolAndTimeframeOrderByOpenTimeDesc(String symbol, String timeframe);
 
     boolean existsBySymbolAndTimeframeAndOpenTime(String symbol, String timeframe, ZonedDateTime openTime);
+
+    List<Candle> findBySymbolAndTimeframeOrderByOpenTimeAsc(String symbol, String timeframe);
+
+    boolean existsBySymbolAndTimeframe(String symbol, String timeframe);
 }
