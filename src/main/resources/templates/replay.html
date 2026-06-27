@@ -36,10 +36,40 @@
                      background:#161616; border:1px solid #ff9944; color:#ff9944;
                      padding:5px 12px; border-radius:5px; font-size:14px; font-weight:bold; letter-spacing:1px; }
         .countdown small { color:#777; font-weight:normal; letter-spacing:0; }
+        /* Fill is click-through so chart panning works across a zone; the
+           handles / grip / delete control are the only interactive bits. */
         .zone-band { position:absolute; pointer-events:none; z-index:3;
-                     background:rgba(255,153,68,0.12); border-top:1px dashed rgba(255,153,68,0.6);
-                     border-bottom:1px dashed rgba(255,153,68,0.6); }
+                     background:rgba(255,153,68,0.14); border-top:1.5px solid rgba(255,153,68,0.85);
+                     border-bottom:1.5px solid rgba(255,153,68,0.85); }
         .zone-band .zone-tag { position:absolute; left:4px; top:1px; font-size:10px; color:#ff9944; background:rgba(0,0,0,0.4); padding:0 4px; border-radius:3px; }
+        .zone-handle { position:absolute; left:0; right:0; height:10px; cursor:ns-resize; pointer-events:auto; }
+        .zone-handle.top { top:-5px; } .zone-handle.bot { bottom:-5px; }
+        .zone-grip { position:absolute; left:3px; top:50%; transform:translateY(-50%);
+                     width:22px; height:22px; line-height:20px; text-align:center; font-size:13px;
+                     color:#fff; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.3);
+                     border-radius:4px; cursor:move; pointer-events:auto; }
+        .zone-del { position:absolute; right:3px; top:50%; transform:translateY(-50%); width:22px; height:22px;
+                    line-height:20px; text-align:center; font-size:14px; color:#fff; background:rgba(0,0,0,0.5);
+                    border:1px solid rgba(255,255,255,0.3); border-radius:4px; cursor:pointer; pointer-events:auto; }
+        .zone-del:hover { background:#cc2222; }
+
+        /* ── Light theme (replay page) ─────────────────────────────────────── */
+        body.light-replay { background:#f4f5f7; color:#222; }
+        body.light-replay .card,
+        body.light-replay .ctrlbar,
+        body.light-replay .chart-card,
+        body.light-replay .rail { background:#ffffff; border-color:#dcdfe4; }
+        body.light-replay .card-title,
+        body.light-replay .muted { color:#777; }
+        body.light-replay .ctrl-btn,
+        body.light-replay .tf-btn { background:#f0f1f3; border-color:#ccc; color:#333; }
+        body.light-replay .tf-btn.active { background:#fff3e6; color:#d2691e; border-color:#d2691e; }
+        body.light-replay .rail button { background:#f0f1f3; border-color:#ccc; color:#444; }
+        body.light-replay .rail button.active { background:#fff3e6; border-color:#d2691e; color:#d2691e; }
+        body.light-replay input, body.light-replay select, body.light-replay textarea { background:#fff; border-color:#ccc; color:#222; }
+        body.light-replay th { color:#888; border-color:#e3e5e9; }
+        body.light-replay td { border-color:#eceef1; }
+        body.light-replay .pill { background:#f0f1f3; border-color:#ccc; }
         .rt-toggle { display:flex; align-items:center; gap:5px; color:#ff9944; cursor:pointer; user-select:none; }
         .rt-toggle input { transform:scale(1.1); }
         .ohlc span { margin-right: 14px; }
@@ -141,6 +171,7 @@
             <button class="ctrl-btn" id="zoomInBtn" title="Zoom in">&#128269;+</button>
             <button class="ctrl-btn" id="zoomOutBtn" title="Zoom out">&#128270;&#8722;</button>
             <button class="ctrl-btn" id="fitBtn" title="Fit all candles">&#9633; Fit</button>
+            <button class="ctrl-btn" id="themeBtn" title="Toggle light/dark theme">&#9728; Light</button>
             <span style="margin-left:auto;"></span>
             <span class="pill" id="clock">--:--</span>
             <span class="muted ohlc" style="font-size:12px;">
@@ -320,6 +351,7 @@ function buildChart() {
     volumeSeries.priceScale().applyOptions({ scaleMargins:{top:0.85, bottom:0} });
 
     chart.subscribeClick(onChartClick);
+    applyTheme(chartTheme); // honour saved light/dark preference
 
     // keep S/R zone overlays glued to their price levels during pan/zoom/scroll
     (function zoneLoop() { positionZones(); requestAnimationFrame(zoneLoop); })();
@@ -385,11 +417,53 @@ function createZone(p1, p2) {
     el.className = 'zone-band';
     const tag = document.createElement('span');
     tag.className = 'zone-tag';
-    tag.textContent = `${bottom.toFixed(0)} – ${top.toFixed(0)}`;
-    el.appendChild(tag);
+    const hTop = document.createElement('div'); hTop.className = 'zone-handle top';
+    const hBot = document.createElement('div'); hBot.className = 'zone-handle bot';
+    const grip = document.createElement('div'); grip.className = 'zone-grip'; grip.innerHTML = '&#10021;';
+    const del  = document.createElement('div'); del.className = 'zone-del'; del.innerHTML = '&times;';
+    el.append(tag, hTop, hBot, grip, del);
     document.querySelector('.chart-card').appendChild(el);
-    zones.push({ top, bottom, el });
+
+    const z = { top, bottom, el, tag };
+    zones.push(z);
+
+    // price at a given clientY, in chart coordinates
+    const yToPrice = (clientY) => {
+        const r = document.getElementById('chart').getBoundingClientRect();
+        return candleSeries.coordinateToPrice(clientY - r.top);
+    };
+
+    del.addEventListener('pointerdown', (e) => { e.stopPropagation(); removeZone(z); });
+
+    // drag whole band via the grip (move both edges together)
+    grip.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const startP = yToPrice(e.clientY); const t0 = z.top, b0 = z.bottom;
+        startDrag(e, (mp) => { const d = mp - startP; z.top = t0 + d; z.bottom = b0 + d; });
+    });
+    // resize from top / bottom edge
+    hTop.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        startDrag(e, (mp) => { z.top = Math.max(mp, z.bottom + 0.05); });
+    });
+    hBot.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        startDrag(e, (mp) => { z.bottom = Math.min(mp, z.top - 0.05); });
+    });
+
+    function startDrag(downEvent, apply) {
+        const move = (ev) => { const mp = yToPrice(ev.clientY); if (mp != null) { apply(mp); positionZones(); } };
+        const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+    }
+
     positionZones();
+}
+
+function removeZone(z) {
+    z.el.remove();
+    zones = zones.filter(x => x !== z);
 }
 
 function positionZones() {
@@ -406,6 +480,7 @@ function positionZones() {
         z.el.style.width = plotW + 'px';
         z.el.style.top    = (chartEl.offsetTop + yTop) + 'px';
         z.el.style.height = Math.max(2, yBot - yTop) + 'px';
+        z.tag.textContent = `${z.bottom.toFixed(0)} – ${z.top.toFixed(0)}`;
     });
 }
 
@@ -427,6 +502,28 @@ function zoom(factor) {
     const center = (r.from + r.to) / 2;
     const half = ((r.to - r.from) / 2) * factor;
     ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+let chartTheme = localStorage.getItem('replayTheme') || 'dark';
+function applyTheme(t) {
+    chartTheme = t;
+    localStorage.setItem('replayTheme', t);
+    const light = t === 'light';
+    document.body.classList.toggle('light-replay', light);
+    const btn = document.getElementById('themeBtn');
+    if (btn) btn.innerHTML = light ? '&#9789; Dark' : '&#9728; Light';
+    if (!chart) return;
+    chart.applyOptions({
+        layout: { background: { color: light ? '#ffffff' : '#0a0a0a' }, textColor: light ? '#333' : '#aaa' },
+        grid: { vertLines: { color: light ? '#eef0f2' : '#161616' }, horzLines: { color: light ? '#eef0f2' : '#161616' } },
+        timeScale: { borderColor: light ? '#d0d3d8' : '#333' },
+        rightPriceScale: { borderColor: light ? '#d0d3d8' : '#333' },
+    });
+    candleSeries.applyOptions({
+        upColor:   light ? '#26a69a' : '#00ff88', downColor:   light ? '#ef5350' : '#ff4444',
+        wickUpColor: light ? '#26a69a' : '#00ff88', wickDownColor: light ? '#ef5350' : '#ff4444',
+    });
 }
 
 // ── Candle reveal ───────────────────────────────────────────────────────────────
@@ -730,6 +827,8 @@ document.getElementById('resetBtn').onclick = async () => {
 document.getElementById('zoomInBtn').onclick  = () => zoom(0.7);
 document.getElementById('zoomOutBtn').onclick = () => zoom(1.4);
 document.getElementById('fitBtn').onclick     = () => chart.timeScale().fitContent();
+document.getElementById('themeBtn').onclick   = () => applyTheme(chartTheme === 'light' ? 'dark' : 'light');
+applyTheme(chartTheme); // reflect saved preference on load (before chart is built)
 
 document.getElementById('toolCursor').onclick = () => setTool('cursor');
 document.getElementById('toolTrend').onclick  = () => setTool('trend');
