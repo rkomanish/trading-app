@@ -343,7 +343,10 @@ function setTool(t) {
 }
 
 function onChartClick(param) {
-    if (tool === 'cursor' || !param.point || param.time == null) return;
+    // Horizontal lines / rays / zones only need a price (y), so they work anywhere
+    // on the chart — including the empty area to the right of the last candle.
+    // Only trendlines need a candle time anchor.
+    if (tool === 'cursor' || !param.point) return;
     const price = candleSeries.coordinateToPrice(param.point.y);
     if (price == null) return;
 
@@ -365,6 +368,7 @@ function onChartClick(param) {
     }
 
     if (tool === 'trend') {
+        if (param.time == null) return; // trendline needs a candle — tap on the price bars
         const pt = { time: param.time, value: price };
         if (!pendingPoint) { pendingPoint = pt; return; }
         const ls = chart.addLineSeries({ color:'#4499ff', lineWidth:2, lastValueVisible:false, priceLineVisible:false });
