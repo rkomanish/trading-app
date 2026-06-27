@@ -19,7 +19,43 @@ trading stays **disabled** (`app.trading.live-enabled: false`) regardless of hos
 
 ---
 
-## Option A — Railway (recommended, easiest)
+## 100% FREE — Render (web) + Neon (Postgres)  ⭐ recommended free combo
+
+Render's free Postgres expires after ~30 days, so use **Neon** for a persistent
+free database and Render's free web service to run the app.
+
+**1. Create a free Postgres on Neon**
+- Sign up at [neon.tech](https://neon.tech) → create a project (region: choose one
+  near you, e.g. Singapore for India).
+- Copy the **connection string** — looks like
+  `postgresql://user:pass@ep-xxx.aws.neon.tech/dbname?sslmode=require`.
+  (The app auto-converts this to a JDBC URL; keep `?sslmode=require`.)
+
+**2. Deploy the app on Render**
+- Push this repo to GitHub.
+- On [render.com](https://render.com): **New → Web Service** → connect the repo.
+- Render detects the `Dockerfile`. Set **Instance Type: Free**.
+- Under **Environment**, add:
+  - `DATABASE_URL` = the Neon connection string from step 1
+  - `APP_USERNAME` = your login
+  - `APP_PASSWORD` = a strong password
+  - `ANTHROPIC_API_KEY` = optional
+- Create the service. First build takes a few minutes; Flyway creates the schema
+  on first boot.
+
+**Free-tier notes**
+- The free web service **sleeps after 15 min of inactivity**; the next visit takes
+  ~50s to wake. Fine for personal use/demos.
+- Neon free tier is **persistent** (your imported candles survive) but may pause an
+  idle DB; it resumes automatically on the next query.
+- 512MB RAM is enough — the Dockerfile caps the JVM heap to fit.
+
+After it's live: open the URL, log in, then **Backtest → Import Data** to pull
+NIFTY candles before using Replay.
+
+---
+
+## Option A — Railway (easiest, paid after trial)
 
 1. Push this repo to GitHub.
 2. On [railway.app](https://railway.app): **New Project → Deploy from GitHub repo**.

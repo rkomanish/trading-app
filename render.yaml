@@ -6,7 +6,7 @@ services:
     name: nifty-autotrader
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free
     healthCheckPath: /actuator/health
     envVars:
       - key: DATABASE_URL
@@ -26,7 +26,9 @@ services:
       - key: DHAN_ENABLED
         value: "false"
 
+# NOTE: Render's free Postgres expires after ~30 days. For a persistent free DB,
+# delete this block and set DATABASE_URL to a Neon (neon.tech) connection string.
 databases:
   - name: nifty-db
     databaseName: trading_app
-    plan: starter
+    plan: free
