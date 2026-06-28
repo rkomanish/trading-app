@@ -50,8 +50,9 @@ public class ReplayController {
     @GetMapping("/candles")
     @ResponseBody
     public List<ReplayService.Bar> candles(@RequestParam String date,
-                                           @RequestParam(defaultValue = "5m") String timeframe) {
-        return replayService.dayCandles(LocalDate.parse(date), timeframe);
+                                           @RequestParam(defaultValue = "5m") String timeframe,
+                                           @RequestParam(defaultValue = "0") int contextDays) {
+        return replayService.dayCandles(LocalDate.parse(date), timeframe, contextDays);
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────────

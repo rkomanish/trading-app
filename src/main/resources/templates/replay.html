@@ -147,6 +147,16 @@
                 <label title="Implied volatility for the synthetic option chain">IV %</label>
                 <input id="ivInp" type="number" value="12" step="0.5" style="width:70px"/>
             </div>
+            <div class="form-group">
+                <label title="Prior trading days shown as fixed context for drawing trendlines">Context days</label>
+                <select id="ctxSel">
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2" selected>2</option>
+                    <option value="3">3</option>
+                    <option value="5">5</option>
+                </select>
+            </div>
             <button class="btn btn-primary" id="startBtn">Start Replay</button>
             <span id="noData" class="muted" th:if="${#lists.isEmpty(availableDates)}">
                 No candle data found. Import NIFTY data on the Backtest page first.
@@ -307,6 +317,7 @@ const CSRF_HEADER = document.querySelector('meta[name="_csrf_header"]').content;
 let chart, candleSeries, volumeSeries;
 let allBars = [];
 let idx = 0;
+let replayStart = 0;   // index of the first candle on the replay day (prior = context)
 let playing = false, timer = null;
 let timeframe = document.getElementById('tfSel').value;
 
@@ -574,8 +585,15 @@ function recolorChart() {
 window.onThemeChange = function () { recolorChart(); };
 
 // ── Candle reveal ───────────────────────────────────────────────────────────────
-function toCandle(b) { return {time:b.time, open:b.open, high:b.high, low:b.low, close:b.close}; }
-function toVol(b)    { return {time:b.time, value:b.volume, color: b.close>=b.open ? '#0a3a0a':'#3a1a1a'}; }
+function toCandle(b) {
+    const c = {time:b.time, open:b.open, high:b.high, low:b.low, close:b.close};
+    if (!b.replay) { c.color = '#5a5a5a'; c.borderColor = '#5a5a5a'; c.wickColor = '#4a4a4a'; } // prior-day context
+    return c;
+}
+function toVol(b) {
+    return {time:b.time, value:b.volume,
+            color: !b.replay ? '#2a2a2a' : (b.close>=b.open ? '#0a3a0a':'#3a1a1a')};
+}
 
 function renderUpTo(n) {
     const slice = allBars.slice(0, n+1);
@@ -588,7 +606,8 @@ function renderUpTo(n) {
     document.getElementById('h').textContent = b.high;
     document.getElementById('l').textContent = b.low;
     document.getElementById('c').textContent = b.close;
-    document.getElementById('progress').textContent = `· bar ${n+1}/${allBars.length}`;
+    document.getElementById('progress').textContent =
+        `· bar ${Math.max(0, n - replayStart) + 1}/${allBars.length - replayStart}`;
 }
 
 function currentPrice() {
@@ -619,16 +638,20 @@ function formingCandle(bar, t) {
 async function loadDay(date, tf, keepProgress) {
     forming = false; livePrice = null; hideCountdown();
     const prevTime = keepProgress && allBars[idx] ? allBars[idx].time : null;
-    const res = await fetch(`/replay/candles?date=${date}&timeframe=${tf}`);
+    const ctxDays = document.getElementById('ctxSel').value || '0';
+    const res = await fetch(`/replay/candles?date=${date}&timeframe=${tf}&contextDays=${ctxDays}`);
     allBars = await res.json();
+    // First index belonging to the replay day (prior days are fixed context).
+    replayStart = allBars.findIndex(b => b.replay);
+    if (replayStart < 0) replayStart = 0;
     if (prevTime != null) {
         idx = 0;
         for (let i=0;i<allBars.length;i++){ if (allBars[i].time <= prevTime) idx = i; else break; }
+        if (idx < replayStart) idx = replayStart; // never reveal less than the open
     } else {
-        // Start at the market open. Reveal just the first 2 candles — enough for
-        // the chart to render (a single point draws as a near-empty chart) while
-        // still beginning right at 9:15.
-        idx = Math.min(1, Math.max(0, allBars.length - 1));
+        // Show all context days fully, then reveal the replay day from its open
+        // (+1 candle so the chart renders). Trendlines can use the prior structure.
+        idx = Math.min(replayStart + 1, Math.max(0, allBars.length - 1));
     }
     renderUpTo(idx);
     chart.timeScale().fitContent();

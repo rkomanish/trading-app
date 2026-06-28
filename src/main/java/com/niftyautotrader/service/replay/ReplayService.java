@@ -40,8 +40,11 @@ public class ReplayService {
         this.candleRepo = candleRepo;
     }
 
-    /** A single OHLCV bar for the chart (time = IST wall-clock seconds for display). */
-    public record Bar(long time, double open, double high, double low, double close, long volume, String label) {}
+    /** A single OHLCV bar for the chart (time = IST wall-clock seconds for display).
+     *  replay=true means it belongs to the selected replay day (revealed progressively);
+     *  replay=false means it's prior-day context (always visible for drawing/analysis). */
+    public record Bar(long time, double open, double high, double low, double close, long volume,
+                      String label, boolean replay) {}
 
     /** One side (CE or PE) of an option chain row. */
     public record OptionQuote(double ltp, double delta, double theta, double iv) {}
@@ -107,10 +110,21 @@ public class ReplayService {
 
     /** Load and aggregate one trading day's candles for the requested timeframe. */
     public List<Bar> dayCandles(LocalDate date, String timeframe) {
+        return dayCandles(date, timeframe, 0);
+    }
+
+    /**
+     * Load the replay day's candles, optionally preceded by {@code contextDays} prior
+     * trading days. The prior days are returned as context bars (replay=false) so the
+     * user can see earlier structure and draw trendlines; the selected day's bars are
+     * marked replay=true and revealed progressively by the frontend.
+     */
+    public List<Bar> dayCandles(LocalDate date, String timeframe, int contextDays) {
         if (!TIMEFRAMES.contains(timeframe)) timeframe = "5m";
         String base = baseTimeframe();
 
-        ZonedDateTime from = date.atStartOfDay(IST);
+        // Fetch a generous calendar window so we still get enough trading days across weekends/holidays.
+        ZonedDateTime from = date.minusDays(contextDays + 7L).atStartOfDay(IST);
         ZonedDateTime to   = date.plusDays(1).atStartOfDay(IST);
         List<Candle> baseCandles = candleRepo
             .findBySymbolAndTimeframeAndOpenTimeBetweenOrderByOpenTimeAsc(SYMBOL, base, from, to);
@@ -130,15 +144,36 @@ public class ReplayService {
             tfCandles = baseCandles;
         }
 
+        // Determine which trading dates to keep: the replay day + the last `contextDays`
+        // trading dates before it (skips weekends/holidays automatically).
+        TreeSet<LocalDate> allDates = new TreeSet<>();
+        for (Candle c : tfCandles) {
+            LocalDate d = c.getOpenTime().withZoneSameInstant(IST).toLocalDate();
+            if (!d.isAfter(date)) allDates.add(d);
+        }
+        List<LocalDate> sorted = new ArrayList<>(allDates);
+        int replayIdx = sorted.indexOf(date);
+        java.util.Set<LocalDate> allowed = new java.util.HashSet<>();
+        if (replayIdx >= 0) {
+            int firstCtx = Math.max(0, replayIdx - contextDays);
+            for (int i = firstCtx; i <= replayIdx; i++) allowed.add(sorted.get(i));
+        } else {
+            allowed.add(date);
+        }
+
+        DateTimeFormatter ctxLabel = DateTimeFormatter.ofPattern("dd-MMM HH:mm");
         List<Bar> bars = new ArrayList<>(tfCandles.size());
         for (Candle c : tfCandles) {
             ZonedDateTime ist = c.getOpenTime().withZoneSameInstant(IST);
+            LocalDate d = ist.toLocalDate();
+            if (!allowed.contains(d)) continue;
+            boolean isReplay = d.equals(date);
             // lightweight-charts renders timestamps in UTC; offset by IST so labels read as IST.
             long displayTime = c.getOpenTime().toEpochSecond() + 19800L;
             bars.add(new Bar(displayTime,
                 c.getOpen().doubleValue(), c.getHigh().doubleValue(),
                 c.getLow().doubleValue(), c.getClose().doubleValue(),
-                c.getVolume(), ist.format(HM)));
+                c.getVolume(), isReplay ? ist.format(HM) : ist.format(ctxLabel), isReplay));
         }
         return bars;
     }
