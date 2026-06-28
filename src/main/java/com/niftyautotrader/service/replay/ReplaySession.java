@@ -36,6 +36,9 @@ public class ReplaySession {
         public int units;            // lots × LOT_SIZE
         public BigDecimal entryPrice;// spot (directional) or premium (option)
         public String entryTime;
+        // bracket levels (nullable) — directional: index price; option: premium
+        public BigDecimal sl;
+        public BigDecimal target;
         // option fields
         public boolean option;
         public String optType;       // "CE" or "PE"
@@ -76,7 +79,8 @@ public class ReplaySession {
         this.startingCapital = startingCapital;
     }
 
-    public synchronized Position open(String side, int lots, BigDecimal price, String time) {
+    public synchronized Position open(String side, int lots, BigDecimal price, String time,
+                                      BigDecimal sl, BigDecimal target) {
         Position p = new Position();
         p.id = seq.getAndIncrement();
         p.side = side;
@@ -84,13 +88,16 @@ public class ReplaySession {
         p.units = lots * LOT_SIZE;
         p.entryPrice = price;
         p.entryTime = time;
+        p.sl = sl;
+        p.target = target;
         positions.add(p);
         return p;
     }
 
     /** Open an option position (CE/PE). entryPremium is computed from spot by the caller. */
     public synchronized Position openOption(String optType, double strike, String side, int lots,
-                                            BigDecimal entryPremium, String time) {
+                                            BigDecimal entryPremium, String time,
+                                            BigDecimal sl, BigDecimal target) {
         Position p = new Position();
         p.id = seq.getAndIncrement();
         p.side = side;
@@ -98,6 +105,8 @@ public class ReplaySession {
         p.units = lots * LOT_SIZE;
         p.entryPrice = entryPremium;
         p.entryTime = time;
+        p.sl = sl;
+        p.target = target;
         p.option = true;
         p.optType = optType;
         p.strike = strike;

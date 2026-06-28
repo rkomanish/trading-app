@@ -111,6 +111,13 @@
         /* tables never force the page wider than the screen */
         .scroll { overflow-x: auto; }
         table { min-width: 0; }
+
+        /* bracket auto-exit toast */
+        .replay-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
+                        background: #111; border: 1px solid #ff4444; color: #ff6666; padding: 10px 18px;
+                        border-radius: 6px; font-size: 13px; font-weight: bold; z-index: 1000;
+                        opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+        .replay-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     </style>
 </head>
 <body>
@@ -214,12 +221,23 @@
                         <input id="lotsInp" type="number" value="1" min="1" style="width:80px"/>
                     </div>
                     <div style="display:flex; gap:8px;">
+                        <div class="form-group" style="flex:1; margin-bottom:8px;">
+                            <label>Stop-Loss (pts)</label>
+                            <input id="slInp" type="number" placeholder="optional" min="0" style="width:100%"/>
+                        </div>
+                        <div class="form-group" style="flex:1; margin-bottom:8px;">
+                            <label>Target (pts)</label>
+                            <input id="tgtInp" type="number" placeholder="optional" min="0" style="width:100%"/>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
                         <button class="btn btn-long"  id="buyBtn"  style="flex:1;">BUY / LONG</button>
                         <button class="btn btn-short" id="sellBtn" style="flex:1;">SELL / SHORT</button>
                     </div>
                     <button class="btn btn-flat" id="flatBtn" style="width:100%; margin-top:8px;">Square Off All</button>
                     <p class="muted" style="margin-top:8px; font-size:11px;">
                         LONG profits when price rises (CE-style). SHORT profits when price falls (PE-style).
+                        SL/Target auto-square-off when hit during replay.
                     </p>
                 </div>
             </div>
@@ -632,8 +650,9 @@ function autoFollow() {
 }
 
 function stepForward() {
-    if (idx < allBars.length - 1) { idx++; renderUpTo(idx); autoFollow(); refreshState(); updateChain(); }
-    else pause();
+    if (idx < allBars.length - 1) {
+        idx++; renderUpTo(idx); autoFollow(); checkBrackets(allBars[idx]); refreshState(); updateChain();
+    } else pause();
 }
 
 function showCountdown(msLeft) {
@@ -671,6 +690,7 @@ function realtimeTick() {
         idx++;
         renderUpTo(idx);
         autoFollow();
+        checkBrackets(allBars[idx]);
         refreshState();
         updateChain();
         if (idx >= allBars.length - 1) { pause(); }
@@ -709,7 +729,9 @@ async function refreshState() {
     const s = await res.json();
     if (s.active) renderAccount(s);
 }
+let positionsCache = [];   // latest open positions, for bracket auto-exit checks
 function renderAccount(s) {
+    positionsCache = s.positions || [];
     document.getElementById('equity').textContent = fmt(s.equity);
     const r = document.getElementById('realized'); r.textContent = fmt(s.realizedPnl); colorPnl(r, s.realizedPnl);
     const u = document.getElementById('unrealized'); u.textContent = fmt(s.unrealizedPnl); colorPnl(u, s.unrealizedPnl);
@@ -755,10 +777,20 @@ function renderAccount(s) {
         }).join('');
     }
 }
+function bracketPts() {
+    return {
+        sl:  parseFloat(document.getElementById('slInp').value),
+        tgt: parseFloat(document.getElementById('tgtInp').value),
+    };
+}
 async function placeOrder(side) {
     const price = currentPrice(); if (price == null) return;
     const lots = parseInt(document.getElementById('lotsInp').value, 10) || 1;
-    const s = await postJson('/replay/order', {side, lots, price, time: currentTime()});
+    const { sl: slPts, tgt: tgtPts } = bracketPts();
+    let sl = null, target = null;
+    if (slPts > 0)  sl     = side === 'LONG' ? price - slPts  : price + slPts;
+    if (tgtPts > 0) target = side === 'LONG' ? price + tgtPts : price - tgtPts;
+    const s = await postJson('/replay/order', {side, lots, price, time: currentTime(), sl, target});
     if (s.active) renderAccount(s);
 }
 async function closePos(id) {
@@ -804,10 +836,72 @@ async function optOrder(optType, strike) {
     const spot = currentPrice(); if (spot == null) return;
     const side = document.getElementById('optSideSel').value;
     const lots = parseInt(document.getElementById('optLotsInp').value, 10) || 1;
-    const s = await postJson('/replay/option-order', {optType, strike, side, lots, spot, time: currentTime()});
+    // SL/Target (pts) here are premium points relative to entry premium.
+    const entryPrem = lastChain[`${optType}:${strike}`];
+    const { sl: slPts, tgt: tgtPts } = bracketPts();
+    let sl = null, target = null;
+    if (entryPrem != null) {
+        if (slPts > 0)  sl     = side === 'LONG' ? entryPrem - slPts  : entryPrem + slPts;
+        if (tgtPts > 0) target = side === 'LONG' ? entryPrem + tgtPts : entryPrem - tgtPts;
+    }
+    const s = await postJson('/replay/option-order', {optType, strike, side, lots, spot, time: currentTime(), sl, target});
     if (s.active) renderAccount(s);
 }
 window.optOrder = optOrder;
+
+// ── Bracket auto-exit ─────────────────────────────────────────────────────────
+async function checkBrackets(bar) {
+    if (!bar || !positionsCache.length) return;
+    let closedAny = false;
+    for (const p of positionsCache) {
+        let hit = null, fill = null;
+        if (!p.option) {
+            if (p.side === 'LONG') {
+                if (p.sl != null && bar.low <= p.sl)        { hit = 'SL';     fill = p.sl; }
+                else if (p.target != null && bar.high >= p.target) { hit = 'TARGET'; fill = p.target; }
+            } else {
+                if (p.sl != null && bar.high >= p.sl)       { hit = 'SL';     fill = p.sl; }
+                else if (p.target != null && bar.low <= p.target)  { hit = 'TARGET'; fill = p.target; }
+            }
+            if (hit) {
+                await postJson('/replay/close', {posId: p.id, price: fill, time: bar.label});
+                toast(`${hit} hit · ${p.side} squared off @ ${Number(fill).toFixed(1)}`, hit);
+                closedAny = true;
+            }
+        } else {
+            const ltp = lastChain[`${p.optType}:${p.strike}`];
+            if (ltp == null) continue;
+            if (p.side === 'LONG') {
+                if (p.sl != null && ltp <= p.sl)            hit = 'SL';
+                else if (p.target != null && ltp >= p.target) hit = 'TARGET';
+            } else {
+                if (p.sl != null && ltp >= p.sl)            hit = 'SL';
+                else if (p.target != null && ltp <= p.target) hit = 'TARGET';
+            }
+            if (hit) {
+                await postJson('/replay/close', {posId: p.id, price: currentPrice(), time: bar.label});
+                toast(`${hit} hit · ${p.optType} ${p.strike} squared off`, hit);
+                closedAny = true;
+            }
+        }
+    }
+    if (closedAny) refreshState();
+}
+
+let toastTimer = null;
+function toast(msg, kind) {
+    let el = document.getElementById('replayToast');
+    if (!el) {
+        el = document.createElement('div'); el.id = 'replayToast'; el.className = 'replay-toast';
+        document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.borderColor = kind === 'TARGET' ? '#00ff88' : '#ff4444';
+    el.style.color = kind === 'TARGET' ? '#00ff88' : '#ff6666';
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
 
 function renderTfButtons() {
     const wrap = document.getElementById('tfButtons');

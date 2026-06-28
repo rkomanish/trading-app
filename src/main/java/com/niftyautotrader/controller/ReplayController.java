@@ -99,7 +99,8 @@ public class ReplayController {
         if (lots < 1) lots = 1;
         double premium = com.niftyautotrader.service.replay.BlackScholes
             .price(spot, strike, s.getTteYears(), s.getIv(), "CE".equals(optType)).price();
-        s.openOption(optType, strike, side, lots, BigDecimal.valueOf(Math.round(premium * 100.0) / 100.0), time);
+        s.openOption(optType, strike, side, lots, BigDecimal.valueOf(Math.round(premium * 100.0) / 100.0),
+            time, num(body.get("sl")), num(body.get("target")));
         return state(s, BigDecimal.valueOf(spot));
     }
 
@@ -112,7 +113,7 @@ public class ReplayController {
         BigDecimal price = new BigDecimal(String.valueOf(body.get("price")));
         String time = String.valueOf(body.getOrDefault("time", ""));
         if (lots < 1) lots = 1;
-        s.open(side, lots, price, time);
+        s.open(side, lots, price, time, num(body.get("sl")), num(body.get("target")));
         return state(s, price);
     }
 
@@ -153,6 +154,14 @@ public class ReplayController {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    /** Parse a nullable/blank numeric body value into a BigDecimal (null if absent/blank). */
+    private BigDecimal num(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        try { return new BigDecimal(s); } catch (NumberFormatException e) { return null; }
+    }
 
     private ReplaySession require(HttpSession http) {
         ReplaySession s = replayService.session(http.getId());
