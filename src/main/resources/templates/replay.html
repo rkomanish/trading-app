@@ -336,7 +336,8 @@ function buildChart() {
     chart = LightweightCharts.createChart(el, {
         layout: { background: {color:'#0a0a0a'}, textColor: '#aaa' },
         grid: { vertLines:{color:'#161616'}, horzLines:{color:'#161616'} },
-        timeScale: { timeVisible:true, secondsVisible:false, borderColor:'#333', rightOffset:6 },
+        timeScale: { timeVisible:true, secondsVisible:false, borderColor:'#333', rightOffset:6,
+                     shiftVisibleRangeOnNewBar:false },
         rightPriceScale: { borderColor:'#333' },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         handleScroll: true, handleScale: true,
@@ -360,9 +361,12 @@ function buildChart() {
 
     window.addEventListener('resize', () => {
         if (!chart) return;
+        // Preserve the user's zoom/scroll across resize (minimize/restore, rotate)
+        const range = chart.timeScale().getVisibleLogicalRange();
         const h = chartHeight();
         el.style.height = h + 'px';
         chart.applyOptions({ width: el.clientWidth, height: h });
+        if (range) chart.timeScale().setVisibleLogicalRange(range);
     });
 }
 
@@ -624,7 +628,7 @@ async function loadDay(date, tf, keepProgress) {
 function autoFollow() {
     const ts = chart.timeScale();
     const pos = ts.scrollPosition();
-    if (pos != null && pos >= -3) ts.scrollToRealTime();
+    if (pos != null && pos >= -1) ts.scrollToRealTime();
 }
 
 function stepForward() {
