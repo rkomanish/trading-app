@@ -603,9 +603,10 @@ async function loadDay(date, tf, keepProgress) {
         idx = 0;
         for (let i=0;i<allBars.length;i++){ if (allBars[i].time <= prevTime) idx = i; else break; }
     } else {
-        // Reveal a small warmup window so the chart has visible context at the
-        // open (a single candle renders as a near-empty/black chart).
-        idx = Math.min(15, Math.max(0, allBars.length - 1));
+        // Start at the market open. Reveal just the first 2 candles — enough for
+        // the chart to render (a single point draws as a near-empty chart) while
+        // still beginning right at 9:15.
+        idx = Math.min(1, Math.max(0, allBars.length - 1));
     }
     renderUpTo(idx);
     chart.timeScale().fitContent();
